@@ -1,0 +1,18 @@
+#
+# SiLabs 446x char driver config
+#
+
+menuconfig SILABS_CHAR_DRIVERS
+	bool "SiLabs Char Drivers"
+	help
+	  SiLab's 446x Modem Interface
+
+if SILABS_CHAR_DRIVERS
+
+config SI446X_DEV
+	bool "Si446x Driver"
+        default y
+        help
+          Driver for serial communication with Si446x radio.
+
+endif

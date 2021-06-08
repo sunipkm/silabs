@@ -1,0 +1,1 @@
+obj-$(SI446X_DEV) += si446x.o
