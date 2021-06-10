@@ -5,7 +5,6 @@
 #define SI446X_MAX_TX_POWER 127 ///< Maximum TX power (+20dBm/100mW)
 
 // Raspberry Pi pin assignments
-#define SI446X_CSN 15 ///! Chip select pin
 #define SI446X_SDN 13 ///! Shutdown pin
 #define SI446X_IRQ 11 ///! Receive interrupt
 
