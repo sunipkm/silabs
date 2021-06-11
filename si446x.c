@@ -57,7 +57,10 @@ struct si446x_dev
 	struct mutex isr_lock;		 // mutex lock to prevent ISR from running
 	u8 *config;					 // initialize as RADIO_CONFIGURATION_DATA_ARRAY
 	u32 config_len;				 // length of RADIO_CONFIGURATION_DATA_ARRAY
-	u8 enabledInterrupts[3]; // enabled interrupts
+	u8 enabledInterrupts[3];	 // enabled interrupts
+	u8 *rx_data;				 // pointer to received data
+	u16 rx_data_sz;				 // in read, have a wait_event_interruptible on this variable, and wake it up from the rx irq work
+	struct mutex rx_lock;		 // mutex lock for received data
 };
 
 static inline int
@@ -456,15 +459,34 @@ static irqreturn_t si446x_irq(int irq, void *dev_id)
 
 static void si446x_internal_read(struct si446x_dev *dev, uint8_t *buf, ssize_t len)
 {
+	struct spi_device *spi;
+	int ret;
 	u8 *din = (uint8_t *)kmalloc(len + 1, GFP_NOWAIT);
 	u8 *dout = (uint8_t *)kmalloc(len + 1, GFP_NOWAIT);
 	memset(dout, 0xff, len + 1);
-	SI446X_ATOMIC()
+	dout[0] = SI446X_CMD_READ_RX_FIFO;
+	spi = dev->spi;
+	struct spi_transfer tx = {
+		.tx_buf = dout,
+		.len = 2,
+	};
+	struct spi_transfer rx = {
+		.rx_buf = din,
+		.len = 2,
+	};
+	struct spi_message msg;
+
+	spi_message_init(&msg);
+	spi_message_add_tail(&tx, &msg);
+	spi_message_add_tail(&rx, &msg);
+	mutex_lock(&(dev->lock));
+	ret = spi_sync(spi, &msg); // assuming negative on error, zero on success
+	mutex_unlock(&(dev->lock));
+	if (ret)
 	{
-		dout[0] = SI446X_CMD_READ_RX_FIFO;
-		spibus_xfer_full(si446x_spi, din, len + 1, dout, len + 1);
-		memcpy(buf, din + 1, len);
-		
+		printk(KERN_ERR DRV_NAME "Error in internal read\n");
+	}
+	memcpy(buf, din + 1, len);
 	setState(SI446X_STATE_RX);
 	free(dout);
 	free(din);
@@ -484,17 +506,17 @@ static void si446x_irq_work_handler(struct work_struct *work)
 		interrupts[6] &= enabledInterrupts[IRQ_CHIP];
 	}
 	if (interrupts[2] & (1 << SI446X_PACKET_RX_PEND))
-		{
-			len = 0;
-			si446x_internal_read(&len, 1);
-			if (!read_rssi)
-				_rssi = getLatchedRSSI();
-			// eprintf("RX packet pending: RSSI %d, length: %u", rssi, len);
-			SI446X_CB_RXCOMPLETE(len, _rssi);
-			(data->rssi) = _rssi;
-			if (len != 0xff)
-				read_rx_fifo = true;
-		}
+	{
+		len = 0;
+		si446x_internal_read(dev, &len, 1);
+		if (!read_rssi)
+			_rssi = getLatchedRSSI(dev);
+		// eprintf("RX packet pending: RSSI %d, length: %u", rssi, len);
+		SI446X_CB_RXCOMPLETE(len, _rssi);
+		(data->rssi) = _rssi;
+		if (len != 0xff)
+			read_rx_fifo = true;
+	}
 	mutex_unlock(&(dev->lock));
 }
 
