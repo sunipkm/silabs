@@ -2,3 +2,10 @@
 **/*.o
 **/*.ko
 **/*.out
+**/*.mod*
+**/*.cmd
+**/*.d
+**/Module*
+**/compile_commands.json
+**/*.order*
+**/.modules.order.cmd
