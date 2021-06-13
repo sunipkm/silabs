@@ -1,3 +1,13 @@
+/**
+ * @file si446x.c
+ * @author Sunip K. Mukherjee (sunipkmukherjee@gmail.com)
+ * @brief 
+ * @version 0.1
+ * @date 2021-06-13
+ * 
+ * @copyright Copyright (c) 2021
+ * 
+ */
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -38,7 +48,7 @@ dev_t device_num;
 struct si446x
 {
     struct cdev serdev;
-    struct spi_device *spibus;      // spi bus
+    struct spi_device *spibus;   // spi bus
     struct mutex lock;           // mutex lock
     struct work_struct irq_work; // IRQ handler
     int sdn_pin;                 // sdn pin
@@ -922,6 +932,9 @@ static int si446x_open(struct inode *inod, struct file *filp)
     // do stuff for init, like putting the device in receive mode
     if (!(dev->init_ctr)) // device not initialized
     {
+        dev->data_available = false;
+        dev->rxbuf->head = 0;
+        dev->rxbuf->tail = 0;
         reset_device(dev);
         u8 conf[] = RADIO_CONFIGURATION_DATA_ARRAY;
         dev->config_len = sizeof(conf);
@@ -949,6 +962,9 @@ static int si446x_release(struct inode *inod, struct file *filp)
         return -ESTALE;
     if (!(dev->init_ctr))
     {
+        dev->data_available = false;
+        dev->rxbuf->head = 0;
+        dev->rxbuf->tail = 0;
         interrupt_off(dev);
         reset_device(dev);
         si446x_sleep(dev);

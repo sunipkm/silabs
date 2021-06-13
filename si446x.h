@@ -1,5 +1,23 @@
+/**
+ * @file si446x.h
+ * @author Sunip K. Mukherjee (sunipkmukherjee@gmail.com)
+ * @brief 
+ * @version 0.1
+ * @date 2021-06-13
+ * 
+ * @copyright Copyright (c) 2021
+ * 
+ */
+#ifndef _SI446X_H
+#define _SI446X_H
+#ifndef __KERNEL__
+#include <stdint.h>
+typedef __u8 u8;
+typedef __u16 u16;
+#else
 #include <linux/kernel.h>
 #include <linux/types.h>
+#endif
 #define SI446X_MAX_PACKET_LEN 128 ///< Maximum packet length
 
 #define SI446X_MAX_TX_POWER 127 ///< Maximum TX power (+20dBm/100mW)
@@ -75,8 +93,7 @@ enum SI446X_IOCTL
     SI446X_ADC_GPIO,         // struct SI446X_ADC_GPIO_MEM
     SI446X_SLEEP,            // void
     SI446X_ADC_CONF,         // struct SI446X_ADC_CONFIG
-    SI446X_RD_RX_BUF_SZ,
-    SI446X_WR_RX_BUF_SZ
+    SI446X_RD_RX_BUF_SZ      // int
 };
 
 struct SI446X_WUT_CONFIG
@@ -108,3 +125,4 @@ struct SI446X_ADC_CONFIG
 };
 
 #define SI446X_CONVERT_TEMP(x) ((899.0 / 4096.0) x - 293)
+#endif // _SI446X_H
