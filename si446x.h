@@ -56,30 +56,55 @@ typedef enum
     SI446X_STATE_RX = 0x08
 } si446x_state_t;
 
-#ifndef DOXYGEN
-static char *si446x_state_str[] = {
-    "Si446x State: No change",
-    "Si446x State: Sleep",
-    "Si446x State: SPI active",
-    "Si446x State: Ready",
-    "Si446x State: Ready",
-    "Si446x State: TX tune",
-    "Si446x State: RX tune",
-    "Si446x State: TX",
-    "Si446x State: RX"};
-#endif
-
-enum SI446X_RETVAL
+enum SI446X_IOCTL
 {
-    SI446X_ERROR = -1,
-    SI446X_TOUT = 0,
-    SI446X_SUCCESS = 1,
-    SI446X_CRC_INVALID = 2,
+    SI446X_SET_STATE = 0xa,  // si446x_state_t state
+    SI446X_GET_STATE,        // si446x_state_t state
+    SI446X_GET_LATCHED_RSSI, // int16_t rssi
+    SI446X_GET_RSSI,         // int16_t rssi
+    SI446X_GET_INFO,         // si446x_info_t info
+    SI446X_DISABLE_WUT,      // void
+    SI446X_SETUP_WUT,        // struct SI446X_WUT_CONFIG
+    SI446X_GET_TX_PWR,       // uint8_t tx power
+    SI446X_SET_TX_PWR,       // uint8_t tx_power
+    SI446X_GET_TEMP,         // int32_t get temperature
+    SI446X_RD_GPIO,          // uint8_t gpio state
+    SI446X_WR_GPIO,          // struct SI446X_GPIO_CONFIG
+    SI446X_SET_LOW_BATT,     // uint16_t voltage
+    SI446X_ADC_BATT,         // uint16_t voltage
+    SI446X_ADC_GPIO,         // struct SI446X_ADC_GPIO_MEM
+    SI446X_SLEEP,            // void
+    SI446X_ADC_CONF,         // struct SI446X_ADC_CONFIG
+    SI446X_RD_RX_BUF_SZ,
+    SI446X_WR_RX_BUF_SZ
 };
 
-#ifndef DOXYGEN
-static char *si446x_errstr[] = {
-    "Si446x: Timed out",
-    "Si446x: Success",
-    "Si446x: CRC invalid on receiver"};
-#endif
+struct SI446X_WUT_CONFIG
+{
+    unsigned char r;
+    unsigned short m;
+    unsigned char ldc;
+    unsigned char config;
+};
+
+struct SI446X_GPIO_CONFIG
+{
+    si446x_gpio_t pin;
+    unsigned char val;
+};
+
+struct SI446X_ADC_GPIO_MEM
+{
+    unsigned char pin;
+    unsigned short val;
+};
+
+struct SI446X_ADC_CONFIG
+{
+    unsigned char en;
+    unsigned char cfg;
+    unsigned char part;
+    unsigned short ret;
+};
+
+#define SI446X_CONVERT_TEMP(x) ((899.0 / 4096.0) x - 293)

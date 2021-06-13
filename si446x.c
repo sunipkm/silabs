@@ -19,6 +19,7 @@
 #include <linux/delay.h>
 #include <linux/circ_buf.h>
 #include <linux/semaphore.h>
+#include <linux/platform_device.h>
 
 #include "si446x_kern.h"
 #include "si446x_config.h"
@@ -28,26 +29,16 @@
 
 #define DRV_NAME "si446x"
 #define DRV_VERSION "0.1"
+#define DEVICE_NAME "ttyUHF"
 
 #define MAX_DEV 1
 
-#define SPI_OPLEN 1
-
-#define SPI_XFER_LEN 1 // doAPI does spi_transfer and spi_transfer_nr
-
-// initialize file_operations
-static const struct file_operations si446x_fops = {.owner = THIS_MODULE,
-                                                   .open = si446x_open,
-                                                   .release = si446x_release,
-                                                   .unlocked_ioctl =
-                                                       si446x_ioctl,
-                                                   .read = si446x_read,
-                                                   .write = si446x_write};
+dev_t device_num;
 
 struct si446x
 {
-    struct cdev *cdev;
-    struct spi_device *spi;      // spi bus
+    struct cdev serdev;
+    struct spi_device *spibus;      // spi bus
     struct mutex lock;           // mutex lock
     struct work_struct irq_work; // IRQ handler
     int sdn_pin;                 // sdn pin
@@ -65,6 +56,7 @@ struct si446x
     struct circ_buf *rxbuf;      // RX data buffer
     int rxbuf_len;               // rx buffer length
     bool data_available;         // indicate RX
+    int init_ctr;                // module use counter
 };
 
 static DECLARE_WAIT_QUEUE_HEAD(rxq);
@@ -141,7 +133,7 @@ static unsigned char get_response(struct si446x *dev, void *buff, unsigned char 
     };
     struct spi_message msg;
     int ret;
-    struct spi_device *spi = dev->spi;
+    struct spi_device *spi = dev->spibus;
     // set command
     dout[0] = SI446X_CMD_READ_CMD_BUFF;
     memset(dout + 1, 0xff, len + 1);
@@ -192,7 +184,7 @@ static u8 wait_for_response(struct si446x *dev, void *out, u8 outLen,
 
 static void spi_write_buf(struct si446x *dev, void *out, u8 len)
 {
-    struct spi_device *spi = dev->spi;
+    struct spi_device *spi = dev->spibus;
     int ret;
     struct spi_transfer tx = {
         .tx_buf = out,
@@ -349,7 +341,7 @@ static u8 get_frr(struct si446x *dev, u8 reg)
         dout[1] = 0xff;
         din[0] = 0;
         din[1] = 0;
-        spi = dev->spi;
+        spi = dev->spibus;
 
         spi_message_init(&msg);
         spi_message_add_tail(&tx, &msg);
@@ -369,6 +361,29 @@ static u8 get_frr(struct si446x *dev, u8 reg)
     return frr;
 }
 
+void si446x_get_info(struct si446x *dev, si446x_info_t *info)
+{
+    u8 data[8] = {
+        SI446X_CMD_PART_INFO};
+    si446x_do_api(dev, data, 1, data, 8);
+
+    info->chipRev = data[0];
+    info->part = (data[1] << 8) | data[2];
+    info->partBuild = data[3];
+    info->id = (data[4] << 8) | data[5];
+    info->customer = data[6];
+    info->romId = data[7];
+
+    data[0] = SI446X_CMD_FUNC_INFO;
+    si446x_do_api(dev, data, 1, data, 6);
+
+    info->revExternal = data[0];
+    info->revBranch = data[1];
+    info->revInternal = data[2];
+    info->patch = (data[3] << 8) | data[4];
+    info->func = data[5];
+}
+
 // Ge the patched RSSI from the beginning of the packet
 static s16 get_latched_rssi(struct si446x *dev)
 {
@@ -377,6 +392,17 @@ static s16 get_latched_rssi(struct si446x *dev)
     s16 rssi;
     frr = get_frr(dev, SI446X_CMD_READ_FRR_A);
     rssi = rssi_dBm(frr);
+    return rssi;
+}
+
+static s16 get_rssi(struct si446x *dev)
+{
+    s8 data[3] = {
+        SI446X_CMD_GET_MODEM_STATUS,
+        0xFF};
+    s16 rssi;
+    si446x_do_api(dev, data, 2, data, 3);
+    rssi = rssi_dBm(data[2]);
     return rssi;
 }
 
@@ -481,7 +507,7 @@ u16 si446x_adc_battery(struct si446x *dev)
  * @brief Get ADC temperature
  * 
  * @param dev 
- * @return s32 Scale by (899/4096) after subtraction with 293
+ * @return s32 Scale by (899/4096) and subtract 293
  */
 s32 si446x_adc_temperature(struct si446x *dev)
 {
@@ -514,6 +540,7 @@ u8 si446x_read_gpio(struct si446x *dev)
     return states;
 }
 
+/*
 u8 si446x_dump(struct si446x *dev, void *buff, uint8_t group)
 {
     static const u8 groupSizes[] = {
@@ -559,10 +586,18 @@ u8 si446x_dump(struct si446x *dev, void *buff, uint8_t group)
 
     return length;
 }
+*/
 
 void si446x_set_tx_power(struct si446x *dev, u8 pwr)
 {
     set_property(dev, SI446X_PA_PWR_LVL, pwr);
+}
+
+u8 si446x_get_tx_power(struct si446x *dev)
+{
+    u8 pwr;
+    pwr = get_property(dev, SI446X_PA_PWR_LVL);
+    return pwr;
 }
 
 void si446x_set_low_batt(struct si446x *dev, u16 voltage)
@@ -637,7 +672,7 @@ static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
     struct spi_message msg;
     memset(dout, 0xff, len + 1);
     dout[0] = SI446X_CMD_READ_RX_FIFO;
-    spi = dev->spi;
+    spi = dev->spibus;
 
     spi_message_init(&msg);
     spi_message_add_tail(&tx, &msg);
@@ -677,6 +712,7 @@ static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
     spi_message_init(&msg);
     spi_message_add_tail(&tx, &msg);
     spi_message_add_tail(&rx, &msg);
+    spi = dev->spibus;
     mutex_lock(&(dev->lock));
     ret = spi_sync(spi, &msg); // assuming negative on error, zero on success
     mutex_unlock(&(dev->lock));
@@ -684,6 +720,7 @@ static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
     {
         printk(KERN_ERR DRV_NAME "Error in internal write\n");
     }
+    kfree(dout);
 }
 
 static int si446x_tx(struct si446x *dev, void *packet, u8 len, u8 channel, si446x_state_t onTxFinish)
@@ -839,8 +876,8 @@ static ssize_t si446x_read(struct file *filp, char __user *buf, size_t count, lo
     remainder = out_count % CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len);
     seq_len = out_count - remainder;
     /* Write the block making sure to wrap around the end of the buffer */
-    copy_to_user(buf, dev->rxbuf->buf + tail, seq_len);
-    copy_to_user(buf + seq_len, dev->rxbuf->buf, remainder);
+    out_count -= copy_to_user(buf, dev->rxbuf->buf + tail, seq_len);
+    out_count -= copy_to_user(buf + seq_len, dev->rxbuf->buf, remainder);
     WRITE_ONCE(dev->rxbuf->tail, (tail + out_count) & (dev->rxbuf_len - 1));
     return out_count;
 ret:
@@ -850,72 +887,432 @@ ret:
 static ssize_t si446x_write(struct file *filp, const char __user *buf, size_t count, loff_t *offset)
 {
     struct si446x *dev;
-    ssize_t i, out_count;
+    ssize_t i, out_count, err_count;
     dev = (struct si446x *)(filp->private_data);
     if (count == 0)
     {
         return 0;
     }
     out_count = count;
+    err_count = 0;
     for (i = 0; out_count > SI446X_MAX_PACKET_LEN; i += SI446X_MAX_PACKET_LEN, out_count -= SI446X_MAX_PACKET_LEN) // write > 128 bytes
     {
         u8 buff[SI446X_MAX_PACKET_LEN];
-        copy_from_user(buff, buf + i, SI446X_MAX_PACKET_LEN);
+        err_count += -copy_from_user(buff, buf + i, SI446X_MAX_PACKET_LEN);
         while (si446x_tx(dev, buff, SI446X_MAX_PACKET_LEN, 0, SI446X_STATE_RX) == 0)
             ;
     }
     if (out_count > 0) // write last 128 bytes
     {
         u8 buff[SI446X_MAX_PACKET_LEN];
-        copy_from_user(buff, buf + i, out_count);
+        err_count += -copy_from_user(buff, buf + i, out_count);
         while (si446x_tx(dev, buff, out_count, 0, SI446X_STATE_RX) == 0)
             ;
     }
-    return (i + out_count);
+    return (i + out_count + err_count);
 }
+
+static int si446x_open(struct inode *inod, struct file *filp)
+{
+    struct si446x *dev;
+    struct cdev *tcdev;
+    tcdev = inod->i_cdev;
+    dev = container_of(tcdev, struct si446x, serdev);
+    filp->private_data = (void *)dev; // this is what sets this for read/write() to work
+    // do stuff for init, like putting the device in receive mode
+    if (!(dev->init_ctr)) // device not initialized
+    {
+        reset_device(dev);
+        u8 conf[] = RADIO_CONFIGURATION_DATA_ARRAY;
+        dev->config_len = sizeof(conf);
+        dev->config = kmalloc(dev->config_len, GFP_NOWAIT);
+        memcpy(dev->config, conf, dev->config_len);
+        apply_startup_config(dev);
+        kfree(dev->config);
+        interrupt(dev, NULL);
+        si446x_sleep(dev);
+        dev->enabledInterrupts[IRQ_PACKET] = (1 << SI446X_PACKET_RX_PEND) | (1 << SI446X_CRC_ERROR_PEND);
+        si446x_setup_callback(dev, SI446X_CBS_RXBEGIN, 1); // enable receive irq
+    }
+    dev->init_ctr++;
+    try_module_get(THIS_MODULE); // increment use count
+    return 0;
+}
+
+static int si446x_release(struct inode *inod, struct file *filp)
+{
+    struct si446x *dev;
+    struct cdev *tcdev;
+    tcdev = inod->i_cdev;
+    dev = container_of(tcdev, struct si446x, serdev);
+    if (dev != filp->private_data)
+        return -ESTALE;
+    if (!(dev->init_ctr))
+    {
+        interrupt_off(dev);
+        reset_device(dev);
+        si446x_sleep(dev);
+        dev->enabledInterrupts[IRQ_PACKET] = 0;
+        dev->isr_state = 0;
+        mutex_unlock(&(dev->isr_lock)); // force unlock irq lock
+    }
+    dev->init_ctr--;
+    module_put(THIS_MODULE); // decrement module count
+    return 0;
+}
+
+static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    struct si446x *dev;
+    long retval;
+    void *ptr;
+    dev = (struct si446x *)filp->private_data;
+    ptr = (void __user *)arg;
+    switch (cmd)
+    {
+    case SI446X_SET_STATE:
+    {
+        int st;
+        retval = -copy_from_user_nofault(&st, ptr, sizeof(int));
+        set_state(dev, st);
+        printk(KERN_INFO DRV_NAME "ioctl set state %d\n", st);
+        break;
+    }
+    case SI446X_GET_STATE:
+    {
+        int st;
+        st = get_state(dev);
+        retval = -copy_to_user_nofault(ptr, &st, sizeof(int));
+        printk(KERN_INFO DRV_NAME "ioctl get state %d\n", st);
+        break;
+    }
+    case SI446X_GET_LATCHED_RSSI:
+    {
+        retval = -copy_to_user_nofault(ptr, &(dev->rssi), sizeof(s16));
+        break;
+    }
+    case SI446X_GET_RSSI:
+    {
+        s16 rssi;
+        rssi = get_rssi(dev);
+        retval = -copy_to_user_nofault(ptr, &rssi, sizeof(s16));
+        break;
+    }
+    case SI446X_GET_INFO:
+    {
+        si446x_info_t info[1];
+        si446x_get_info(dev, info);
+        retval = -copy_to_user_nofault(ptr, info, sizeof(si446x_info_t));
+        break;
+    }
+    case SI446X_DISABLE_WUT:
+    {
+        si446x_disable_wut(dev);
+        retval = 1;
+        break;
+    }
+    case SI446X_SETUP_WUT:
+    {
+        struct SI446X_WUT_CONFIG conf[1];
+        retval = -copy_from_user_nofault(conf, ptr, sizeof(struct SI446X_WUT_CONFIG));
+        if (!retval)
+            si446x_setup_wut(dev, conf->r, conf->m, conf->ldc, conf->config);
+        break;
+    }
+    case SI446X_GET_TX_PWR:
+    {
+        u8 pwr;
+        pwr = si446x_get_tx_power(dev);
+        retval = -copy_to_user_nofault(ptr, &pwr, sizeof(u8));
+        break;
+    }
+    case SI446X_SET_TX_PWR:
+    {
+        u8 pwr;
+        retval = -copy_from_user_nofault(&pwr, ptr, sizeof(u8));
+        si446x_set_tx_power(dev, pwr);
+        break;
+    }
+    case SI446X_GET_TEMP:
+    {
+        s32 temp;
+        temp = si446x_adc_temperature(dev);
+        retval = -copy_to_user_nofault(ptr, &temp, sizeof(s32));
+        break;
+    }
+    case SI446X_RD_GPIO:
+    {
+        u8 st;
+        st = si446x_read_gpio(dev);
+        retval = -copy_to_user_nofault(ptr, &st, sizeof(s8));
+        break;
+    }
+    case SI446X_WR_GPIO:
+    {
+        struct SI446X_GPIO_CONFIG conf[1];
+        retval = -copy_from_user_nofault(conf, ptr, sizeof(struct SI446X_GPIO_CONFIG));
+        si446x_write_gpio(dev, conf->pin, conf->val);
+        break;
+    }
+    case SI446X_SET_LOW_BATT:
+    {
+        u16 volt;
+        retval = -copy_from_user_nofault(&volt, ptr, sizeof(u16));
+        si446x_set_low_batt(dev, volt);
+        break;
+    }
+    case SI446X_ADC_BATT:
+    {
+        u16 batt;
+        batt = si446x_adc_battery(dev);
+        retval = -copy_to_user_nofault(ptr, &batt, sizeof(u16));
+        break;
+    }
+    case SI446X_ADC_GPIO:
+    {
+        struct SI446X_ADC_GPIO_MEM gp[1];
+        retval = -copy_from_user_nofault(gp, ptr, sizeof(struct SI446X_ADC_GPIO_MEM));
+        if (retval)
+        {
+            break;
+        }
+        gp->val = si446x_adc_gpio(dev, gp->pin);
+        retval = -copy_to_user_nofault(ptr, gp, sizeof(struct SI446X_ADC_GPIO_MEM));
+        break;
+    }
+    case SI446X_SLEEP:
+    {
+        retval = si446x_sleep(dev);
+        if (!retval)
+        {
+            printk(KERN_INFO DRV_NAME "Can not sleep, TX going\n");
+        }
+        break;
+    }
+    case SI446X_ADC_CONF:
+    {
+        struct SI446X_ADC_CONFIG conf[1];
+        retval = -copy_from_user_nofault(conf, ptr, sizeof(struct SI446X_ADC_CONFIG));
+        if (retval)
+        {
+            break;
+        }
+        conf->ret = get_adc(dev, conf->en, conf->cfg, conf->part);
+        retval = -copy_to_user_nofault(ptr, conf, sizeof(struct SI446X_ADC_CONFIG));
+        break;
+    }
+    case SI446X_RD_RX_BUF_SZ:
+    {
+        retval = -copy_to_user_nofault(ptr, &(dev->rxbuf_len), sizeof(int));
+        break;
+    }
+    default:
+        printk(KERN_ERR DRV_NAME "%d invalid ioctl command\n", cmd);
+        retval = -ENOIOCTLCMD;
+        break;
+    }
+    return retval;
+}
+
+// initialize file_operations
+static const struct file_operations si446x_fops = {.owner = THIS_MODULE,
+                                                   .open = si446x_open,
+                                                   .release = si446x_release,
+                                                   .unlocked_ioctl =
+                                                       si446x_ioctl,
+                                                   .read = si446x_read,
+                                                   .write = si446x_write};
+
+static int si446x_probe(struct spi_device *spi)
+{
+    struct si446x *dev;
+    struct device *pdev;
+    int ret;
+    ret = 0;
+
+    printk(KERN_INFO DRV_NAME " driver is loaded\n");
+
+    dev = kmalloc(sizeof(struct si446x), GFP_KERNEL);
+
+    if ((!dev))
+    {
+        ret = -ENOMEM;
+        printk(KERN_ERR DRV_NAME " Error allocating memory\n");
+        goto err_alloc_main;
+    }
+
+    if ((dev->rxbuf_len < SI446X_MAX_PACKET_LEN) || (dev->rxbuf_len > 128 * SI446X_MAX_PACKET_LEN)) // malloc
+        dev->rxbuf_len = 16 * SI446X_MAX_PACKET_LEN;
+    dev->rxbuf->buf = kzalloc(dev->rxbuf_len, GFP_KERNEL);
+    if (!dev->rxbuf->buf)
+    {
+        ret = -ENOMEM;
+        printk(KERN_ERR DRV_NAME " Error allocating memory for receiver buffer\n");
+        goto err_main;
+    }
+
+    ret = alloc_chrdev_region(&device_num, 0, MAX_DEV, DEVICE_NAME);
+    if (!ret)
+    {
+        int ma, mi;
+        dev_t this_dev;
+        ma = MAJOR(device_num);
+        mi = MINOR(device_num);
+        this_dev = MKDEV(ma, mi);
+        cdev_init(&(dev->serdev), &si446x_fops);
+        ret = cdev_add(&(dev->serdev), this_dev, 1);
+        if (ret)
+        {
+            printk(KERN_ERR DRV_NAME " Error adding serial device interface for major %d minor %d\n", ma, mi);
+            goto err_init_serial;
+        }
+    }
+    else
+    {
+        goto err_init_serial;
+    }
+
+    pdev = &(spi->dev);
+
+    dev->spibus = spi;
+
+    spi_set_drvdata(spi, dev);
+
+    if (of_property_read_s32(pdev->of_node, "sdn_pin", &(dev->sdn_pin)))
+    {
+        printk(KERN_ERR DRV_NAME " Error reading SDN pin number, read %d\n", dev->sdn_pin);
+        goto err_init_serial;
+    }
+    ret = gpio_request(dev->sdn_pin, DRV_NAME);
+    if (ret)
+    {
+        printk(KERN_ERR DRV_NAME "Error requesting gpio pin %d, status %d\n", dev->sdn_pin, ret);
+        goto err_init_serial;
+    }
+    if (!gpio_is_valid(dev->sdn_pin))
+    {
+        printk(KERN_ERR DRV_NAME "%d not valid GPIO pin\n", dev->sdn_pin);
+        goto err_init_serial;
+    }
+    ret = gpio_direction_output(dev->sdn_pin, 0);
+    if (ret)
+    {
+        printk(KERN_ERR DRV_NAME "Error %d setting GPIO output direction\n", ret);
+        goto err_init_serial;
+    }
+    mutex_init(&(dev->lock));
+    mutex_init(&(dev->isr_lock));
+    dev->isr_state = 0;
+    dev->enabledInterrupts[0] = 0;
+    dev->enabledInterrupts[1] = 0;
+    dev->enabledInterrupts[2] = 0;
+    INIT_WORK(&(dev->irq_work), si446x_irq_work_handler);
+    spi_set_drvdata(spi, dev);
+
+    ret = request_irq(spi->irq, si446x_irq, 0, DRV_NAME, dev);
+    if (ret < 0)
+    {
+        printk(KERN_ERR DRV_NAME " Error requesting IRQ, return %d\n", ret);
+        goto err_init_serial;
+    }
+
+    return 0;
+err_init_serial:
+    kfree(dev->rxbuf->buf);
+err_main:
+    kfree(dev);
+err_alloc_main:
+    return ret;
+}
+
+static int si446x_remove(struct spi_device *spi)
+{
+    struct si446x *dev;
+    int i;
+    dev = spi_get_drvdata(spi);
+    if (dev->rxbuf->buf)
+        kfree(dev->rxbuf->buf);
+    dev->rxbuf->head = 0;
+    dev->rxbuf->tail = 0;
+    for (i = 0; i < 3; i++)
+        dev->enabledInterrupts[i] = 0;
+    cdev_del(&(dev->serdev));
+    gpio_free(dev->sdn_pin);
+    free_irq(spi->irq, dev);
+    kfree(dev);
+    return 0;
+}
+
+static const struct of_device_id si446x_dt_ids[] = {
+    {.compatible = "silabs,si446x"},
+    {/* sentinel */}};
+MODULE_DEVICE_TABLE(of, si446x_dt_ids);
+
+static struct spi_driver si446x_driver = {
+    .driver = {
+        .name = DRV_NAME,
+        .of_match_table = si446x_dt_ids,
+    },
+    .probe = si446x_probe,
+    .remove = si446x_remove,
+};
+module_spi_driver(si446x_driver);
+
+MODULE_DESCRIPTION(DRV_NAME " Si446x UHF Transceiver Driver");
+MODULE_AUTHOR("Sunip K. Mukherjee <sunipkmukherjee@gmail.com>");
+MODULE_LICENSE("GPL");
+MODULE_ALIAS("spi:" DRV_NAME);
 
 /**
- * static int my_open(struct inode *inode, struct file *file)
-{
-    struct my_device_data *my_data;
-
-    my_data = container_of(inode->i_cdev, struct my_device_data, cdev);
-
-    file->private_data = my_data;
-    //...
-}
-
-static int my_read(struct file *file, char __user *user_buffer, size_t size, loff_t *offset)
-{
-    struct my_device_data *my_data;
-
-    my_data = (struct my_device_data *) file->private_data;
-
-    //...
-}
+ * Device Tree Structure
  * 
+ * // Overlay for the SiLabs Si446X Controller - SPI0
+ * // Interrupt pin: 11
+ * // SDN Pin: 13 
+ * /dts-v1/;
+ * /plugin/;
+
+   / {
+    compatible = "brcm,bcm2708";
+
+    fragment@0 {
+        target = <&spi0>;
+        __overlay__ {
+            // needed to avoid dtc warning
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            status = "okay";
+
+            uhf0: si446x@0{
+                compatible = "silabs,si446x";
+                reg = <0>; // CE0
+                pinctrl-names = "default";
+                pinctrl-0 = <&uhf0_pins>;
+                interrupt-parent = <&gpio>;
+                interrupts = <11 0x2>; // falling edge
+                spi-max-frequency = <4000000>;
+		sdn_pin = <13>;
+                status = "okay";
+            };
+        };
+    };
+
+    fragment@1 {
+        target = <&gpio>;
+        __overlay__ {
+            uhf0_pins: uhf0_pins {
+                brcm,pins = <11 13>; // gpio 11, gpio 13
+                brcm,function = <0 1>; // in, out
+                brcm,pull = <2 0>; // high, none
+            };
+        };
+    };
+
+    __overrides__ {
+        int_pin = <&uhf0>, "interrupts:0",
+                  <&uhf0_pins>, "brcm,pins:0";
+        speed   = <&uhf0>, "spi-max-frequency:0";
+    };
+};
  */
-
-/*
- * To read a reg property: 
- * property = <0xa>; // in device tree
- * 
- * void *ptr; int ret;
- * ptr = of_get_property(op->dev.of_node, "property", &ret); // ret stores the length of the property
- * 
- * int value;
- * value = be32_to_cpup(ptr); // get CPU endian value 
- * 
- */
-
-/*
- * To do GPIO stuff:
- * 0. gpio_request()
- * 1. gpio_is_valid(int gpio)
- * 2. Get gpio desc (gpio_to_desc(gpio))
- * 3. Set dir: gpio_direction_output(gpio, value) // set this as high
- * 4. To write: gpio_set_value_cansleep(gpio, value)
- *  
- */
-
-// static int of_si446x_get_gpio_number(struct )
