@@ -239,6 +239,7 @@ static void spi_write_buf(struct si446x *dev, void *out, u8 len)
 static void si446x_do_api(struct si446x *dev, void *data, u8 len, void *out,
                           u8 outLen)
 {
+    printk(KERN_INFO DRV_NAME ": Starting doAPI");
     static int counter = 0;
     int ret;
     ret = interrupt_off(dev);
