@@ -186,16 +186,18 @@ static u8 wait_for_response(struct si446x *dev, void *out, u8 outLen,
     static int count = 0;
     // With F_CPU at 8MHz and SPI at 4MHz each check takes about 7us + 10us delay
     u16 timeout = 40000;
+    int response_count = 0;
     while (!get_response(dev, out, outLen))
     {
         delay_us(10);
+        response_count++;
         if (useTimeout && !--timeout)
         {
             SI446X_CB_CMDTIMEOUT();
             return 0;
         }
     }
-    printk(KERN_INFO DRV_NAME ": %s counter: %d\n", __func__, ++count);
+    printk(KERN_INFO DRV_NAME ": %s counter: %d, get_response wait: %d\n", __func__, ++count, response_count);
     return 1;
 }
 
