@@ -964,7 +964,7 @@ static int si446x_open(struct inode *inod, struct file *filp)
     // do stuff for init, like putting the device in receive mode
     if (!(dev->init_ctr)) // device not initialized
     {
-        init_completion((&(dev->initq))->done);
+        init_completion(&(dev->initq));
         schedule_work(&(dev->init_work));
         wait_for_completion_interruptible(&(dev->initq));
     }

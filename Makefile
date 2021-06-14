@@ -3,13 +3,15 @@ obj-m += si446x.o
 KERNELPATH=~/rpi-linux
 
 ARCH=$(shell uname -m)
-CROSS_COMPILE=
-ARCH_NAME=
+CROSS_COMPILE=CROSS_COMPILE=arm-linux-gnueabihf-
+ARCH_NAME=ARCH=arm
 ifeq ($(ARCH), arm)
 	ARCH_NAME=
-else
-	ARCH_NAME=ARCH=arm
-	CROSS_COMPILE=CROSS_COMPILE=arm-linux-gnueabihf-
+	CROSS_COMPILE=
+endif
+ifeq ($(ARCH), armv7l)
+	ARCH_NAME=
+	CROSS_COMPILE=
 endif
 
 all:
