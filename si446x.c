@@ -1169,34 +1169,34 @@ static int si446x_probe(struct spi_device *spi)
 
     if (!spi)
     {
-        printk(KERN_ERR DRV_NAME " spi is NULL, FATAL ERROR\n");
+        printk(KERN_ERR DRV_NAME ": spi is NULL, FATAL ERROR\n");
         return -ENOMEM;
     }
 
-    printk(KERN_INFO DRV_NAME " driver is loaded\n");
+    printk(KERN_INFO DRV_NAME ": driver is loaded\n");
 
     dev = kmalloc(sizeof(struct si446x), GFP_KERNEL);
 
-    printk(KERN_INFO DRV_NAME " driver mem allocated\n");
+    printk(KERN_INFO DRV_NAME ": driver mem allocated\n");
 
     if ((!dev))
     {
         ret = -ENOMEM;
-        printk(KERN_ERR DRV_NAME " Error allocating memory\n");
+        printk(KERN_ERR DRV_NAME ": Error allocating memory\n");
         goto err_alloc_main;
     }
 
     pdev = &(spi->dev);
-    printk(KERN_INFO DRV_NAME " platform device %p\n", pdev);
+    printk(KERN_INFO DRV_NAME ": platform device %p\n", pdev);
 
     dev->spibus = spi;
 
     spi_set_drvdata(spi, dev);
-    printk(KERN_INFO DRV_NAME " spi drvdata set, %p = %p\n", spi, spi_get_drvdata(spi));
+    printk(KERN_INFO DRV_NAME ": spi drvdata set, %p = %p\n", spi, spi_get_drvdata(spi));
 
     if (of_property_read_s32(pdev->of_node, "sdn_pin", &(dev->sdn_pin)))
     {
-        printk(KERN_ERR DRV_NAME " Error reading SDN pin number, read %d\n", dev->sdn_pin);
+        printk(KERN_ERR DRV_NAME ": Error reading SDN pin number, read %d\n", dev->sdn_pin);
         ret = -ENODATA;
         goto err_main;
     }
@@ -1207,37 +1207,37 @@ static int si446x_probe(struct spi_device *spi)
         ret = -ENODATA;
         goto err_main;
     }
-    printk(KERN_INFO DRV_NAME " SDN pin: %d\n", dev->sdn_pin);
+    printk(KERN_INFO DRV_NAME ": SDN pin: %d\n", dev->sdn_pin);
     ret = gpio_request(dev->sdn_pin, DRV_NAME);
     if (ret)
     {
-        printk(KERN_ERR DRV_NAME "Error requesting gpio pin %d, status %d\n", dev->sdn_pin, ret);
+        printk(KERN_ERR DRV_NAME ": Error requesting gpio pin %d, status %d\n", dev->sdn_pin, ret);
         ret = -ENODEV;
         goto err_main;
     }
     if (!gpio_is_valid(dev->sdn_pin))
     {
-        printk(KERN_ERR DRV_NAME "%d not valid GPIO pin\n", dev->sdn_pin);
+        printk(KERN_ERR DRV_NAME ": %d not valid GPIO pin\n", dev->sdn_pin);
         ret = -ENODEV;
         goto err_main;
     }
     ret = gpio_direction_output(dev->sdn_pin, 0);
     if (ret)
     {
-        printk(KERN_ERR DRV_NAME "Error %d setting GPIO output direction\n", ret);
+        printk(KERN_ERR DRV_NAME ": Error %d setting GPIO output direction\n", ret);
         ret = -ENODEV;
         goto err_main;
     }
     ret = gpio_request(dev->nirq_pin, DRV_NAME "IRQ");
     if (ret)
     {
-        printk(KERN_ERR DRV_NAME "Error requesting gpio pin %d, status %d\n", dev->nirq_pin, ret);
+        printk(KERN_ERR DRV_NAME ": Error requesting gpio pin %d, status %d\n", dev->nirq_pin, ret);
         ret = -ENODEV;
         goto err_main;
     }
     if (!gpio_is_valid(dev->nirq_pin))
     {
-        printk(KERN_ERR DRV_NAME "%d not valid GPIO pin\n", dev->nirq_pin);
+        printk(KERN_ERR DRV_NAME ": %d not valid GPIO pin\n", dev->nirq_pin);
         ret = -ENODEV;
         goto err_main;
     }
@@ -1254,7 +1254,7 @@ static int si446x_probe(struct spi_device *spi)
     if (!(dev->rxbuf))
     {
         ret = -ENOMEM;
-        printk(KERN_ERR DRV_NAME " Error allocating memory for receiver buffer\n");
+        printk(KERN_ERR DRV_NAME ": Error allocating memory for receiver buffer\n");
         goto err_main;
     }
     if ((dev->rxbuf_len < SI446X_MAX_PACKET_LEN) || (dev->rxbuf_len > 128 * SI446X_MAX_PACKET_LEN)) // malloc
@@ -1263,28 +1263,28 @@ static int si446x_probe(struct spi_device *spi)
     if (!dev->rxbuf->buf)
     {
         ret = -ENOMEM;
-        printk(KERN_ERR DRV_NAME " Error allocating memory for receiver buffer\n");
+        printk(KERN_ERR DRV_NAME ": Error allocating memory for receiver buffer\n");
         goto err_alloc_buf;
     }
-    printk(KERN_INFO DRV_NAME " buff mem allocated\n");
+    printk(KERN_INFO DRV_NAME ": buff mem allocated\n");
     ret = alloc_chrdev_region(&device_num, 0, MAX_DEV, DEVICE_NAME);
-    printk(KERN_INFO DRV_NAME " chardev region allocated\n");
+    printk(KERN_INFO DRV_NAME ": chardev region allocated\n");
     if (!ret)
     {
-        printk(KERN_INFO DRV_NAME " chardev allocating\n");
+        printk(KERN_INFO DRV_NAME ": chardev allocating\n");
         int ma, mi;
         dev_t this_dev;
         ma = MAJOR(device_num);
         mi = MINOR(device_num);
-        printk(KERN_INFO DRV_NAME " major %d minor %d\n", ma, mi);
+        printk(KERN_INFO DRV_NAME ": major %d minor %d\n", ma, mi);
         this_dev = MKDEV(ma, mi);
         cdev_init(&(dev->serdev), &si446x_fops);
-        printk(KERN_INFO DRV_NAME " cdev init\n");
+        printk(KERN_INFO DRV_NAME ": cdev init\n");
         ret = cdev_add(&(dev->serdev), this_dev, 1);
-        printk(KERN_INFO DRV_NAME " cdev add\n");
+        printk(KERN_INFO DRV_NAME ": cdev add\n");
         if (ret)
         {
-            printk(KERN_ERR DRV_NAME " Error adding serial device interface for major %d minor %d\n", ma, mi);
+            printk(KERN_ERR DRV_NAME ": Error adding serial device interface for major %d minor %d\n", ma, mi);
             goto err_init_serial;
         }
         else
@@ -1296,7 +1296,7 @@ static int si446x_probe(struct spi_device *spi)
     else
     {
 
-        printk(KERN_INFO DRV_NAME " chardev region not allocated\n");
+        printk(KERN_INFO DRV_NAME ": chardev region not allocated\n");
         goto err_init_serial;
     }
 
@@ -1313,7 +1313,7 @@ static int si446x_probe(struct spi_device *spi)
     ret = request_irq(spi->irq, si446x_irq, 0, DRV_NAME, dev);
     if (ret < 0)
     {
-        printk(KERN_ERR DRV_NAME " Error requesting IRQ, return %d\n", ret);
+        printk(KERN_ERR DRV_NAME ": Error requesting IRQ, return %d\n", ret);
         goto err_init_serial;
     }
 
