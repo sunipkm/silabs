@@ -234,7 +234,10 @@ static void spi_write_buf(struct si446x *dev, void *out, u8 len)
 static void si446x_do_api(struct si446x *dev, void *data, u8 len, void *out,
                           u8 outLen)
 {
-    int ret = interrupt_off(dev);
+    static int counter = 0;
+    int ret;
+    ret = interrupt_off(dev);
+    printk(KERN_INFO DRV_NAME ": Starting doAPI %d\n", counter);
     {
         if (wait_for_response(dev, NULL, 0,
                               1)) // Make sure it's ok to send a command
@@ -248,6 +251,7 @@ static void si446x_do_api(struct si446x *dev, void *data, u8 len, void *out,
                 wait_for_response(dev, out, outLen, 1);
         }
     }
+    printk(KERN_INFO DRV_NAME ": Finishing doAPI %d\n", counter++);
     ret = interrupt_on(dev);
 }
 
