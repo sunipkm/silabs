@@ -117,7 +117,7 @@ static void __empty_callback1(s16 param1)
 
 void SI446X_CB_CMDTIMEOUT(void)
 {
-    printk(KERN_ERR DRV_NAME "wait_for_response timed out\n");
+    printk(KERN_ERR DRV_NAME ": wait_for_response timed out\n");
 }
 void __attribute__((weak, alias("__empty_callback1")))
 SI446X_CB_RXBEGIN(s16 rssi);
