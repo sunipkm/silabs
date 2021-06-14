@@ -76,18 +76,22 @@ static DECLARE_WAIT_QUEUE_HEAD(rxq);
 
 static inline int interrupt_off(struct si446x *dev)
 {
-    if (!(dev->isr_state))
+    static int counter = 0;
+    if ((dev->isr_state) == 0)
         mutex_lock(&(dev->isr_lock)); // prevent ISR from running
     dev->isr_state++;
+    printk(KERN_INFO DRV_NAME ": %s run %d, post: %d\n", __func__, counter++, dev->isr_state);
     return 1;
 }
 
 static inline int interrupt_on(struct si446x *dev)
 {
+    static int counter = 0;
     if (dev->isr_state > 0)
         dev->isr_state--;
     if (dev->isr_state == 0)
         mutex_unlock(&(dev->isr_lock)); // Allow ISR to run
+    printk(KERN_INFO DRV_NAME ": %s run %d, post: %d\n", __func__, counter++, dev->isr_state);
     return 0;
 }
 
@@ -803,6 +807,7 @@ static void si446x_init_work_handler(struct work_struct *work)
     dev->data_available = false;
     dev->rxbuf->head = 0;
     dev->rxbuf->tail = 0;
+    dev->isr_state = 0;
     reset_device(dev);
     printk(KERN_INFO DRV_NAME ": Device reset\n");
     u8 conf[] = RADIO_CONFIGURATION_DATA_ARRAY;
