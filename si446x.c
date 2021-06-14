@@ -199,6 +199,7 @@ static u8 wait_for_response(struct si446x *dev, void *out, u8 outLen,
 
 static void spi_write_buf(struct si446x *dev, void *out, u8 len)
 {
+    static int count = 0;
     struct spi_device *spi;
     int ret;
     u8 i;
@@ -214,6 +215,7 @@ static void spi_write_buf(struct si446x *dev, void *out, u8 len)
     mutex_lock(&(dev->lock));
     ret = spi_sync_transfer(spi, &tx, 1);
     mutex_unlock(&(dev->lock));
+    printk(KERN_INFO DRV_NAME ": %s xfer count: %d\n", __func__, ++count);
     for (i = 0; i < len; i++)
         printk(KERN_INFO DRV_NAME ": %u -> Out: %u\n", i, ((u8 *)out)[i]);
     if (ret != 0)
