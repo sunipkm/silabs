@@ -12,8 +12,8 @@
 #define _SI446X_H
 #ifndef __KERNEL__
 #include <stdint.h>
-typedef __u8 u8;
-typedef __u16 u16;
+typedef uint8_t u8;
+typedef uint16_t u16;
 #else
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -124,5 +124,5 @@ struct SI446X_ADC_CONFIG
     unsigned short ret;
 };
 
-#define SI446X_CONVERT_TEMP(x) ((899.0 / 4096.0) x - 293)
+#define SI446X_CONVERT_TEMP(x) ((899.0 / 4096.0) * x - 293)
 #endif // _SI446X_H
