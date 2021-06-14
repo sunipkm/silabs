@@ -1,7 +1,6 @@
-
- // Overlay for the SiLabs Si446X Controller - SPI0
+// Overlay for the SiLabs Si446X Controller - SPI0
  // Interrupt pin: 11
- // SDN Pin: 13 
+ // SDN Pin: 13
  /dts-v1/;
  /plugin/;
 
@@ -23,9 +22,9 @@
                 pinctrl-names = "default";
                 pinctrl-0 = <&uhf0_pins>;
                 interrupt-parent = <&gpio>;
-                interrupts = <11 0x2>; // falling edge
+                interrupts = <17 0x2>; // falling edge
                 spi-max-frequency = <4000000>;
-		        sdn_pin = <13>;
+                sdn_pin = <27>;
                 status = "okay";
             };
         };
@@ -35,7 +34,7 @@
         target = <&gpio>;
         __overlay__ {
             uhf0_pins: uhf0_pins {
-                brcm,pins = <11 13>; // gpio 11, gpio 13
+                brcm,pins = <17 27>; // gpio 11, gpio 13
                 brcm,function = <0 1>; // in, out
                 brcm,pull = <2 0>; // high, none
             };

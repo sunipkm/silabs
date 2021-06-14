@@ -1150,6 +1150,8 @@ static int si446x_probe(struct spi_device *spi)
 
     dev = kmalloc(sizeof(struct si446x), GFP_KERNEL);
 
+    printk(KERN_INFO DRV_NAME " driver mem allocated\n");
+
     if ((!dev))
     {
         ret = -ENOMEM;
@@ -1166,17 +1168,22 @@ static int si446x_probe(struct spi_device *spi)
         printk(KERN_ERR DRV_NAME " Error allocating memory for receiver buffer\n");
         goto err_main;
     }
-
+    printk(KERN_INFO DRV_NAME " buff mem allocated\n");
     ret = alloc_chrdev_region(&device_num, 0, MAX_DEV, DEVICE_NAME);
+    printk(KERN_INFO DRV_NAME " chardev region allocated\n");
     if (!ret)
     {
+        printk(KERN_INFO DRV_NAME " chardev allocating\n");
         int ma, mi;
         dev_t this_dev;
         ma = MAJOR(device_num);
         mi = MINOR(device_num);
+        printk(KERN_INFO DRV_NAME " major %d minor %d\n", ma, mi);
         this_dev = MKDEV(ma, mi);
         cdev_init(&(dev->serdev), &si446x_fops);
+        printk(KERN_INFO DRV_NAME " cdev init\n");
         ret = cdev_add(&(dev->serdev), this_dev, 1);
+        printk(KERN_INFO DRV_NAME " cdev add\n");
         if (ret)
         {
             printk(KERN_ERR DRV_NAME " Error adding serial device interface for major %d minor %d\n", ma, mi);
@@ -1185,20 +1192,25 @@ static int si446x_probe(struct spi_device *spi)
     }
     else
     {
+
+        printk(KERN_INFO DRV_NAME " chardev region not allocated\n");
         goto err_init_serial;
     }
 
     pdev = &(spi->dev);
+    printk(KERN_INFO DRV_NAME " platform device %p\n", pdev);
 
     dev->spibus = spi;
 
     spi_set_drvdata(spi, dev);
+    printk(KERN_INFO DRV_NAME " spi drvdata set, %p = %p\n", spi, spi_get_drvdata(spi));
 
     if (of_property_read_s32(pdev->of_node, "sdn_pin", &(dev->sdn_pin)))
     {
         printk(KERN_ERR DRV_NAME " Error reading SDN pin number, read %d\n", dev->sdn_pin);
         goto err_init_serial;
     }
+    printk(KERN_INFO DRV_NAME " SDN pin: %d\n", dev->sdn_pin);
     ret = gpio_request(dev->sdn_pin, DRV_NAME);
     if (ret)
     {
@@ -1308,7 +1320,7 @@ MODULE_ALIAS("spi:" DRV_NAME);
                 interrupt-parent = <&gpio>;
                 interrupts = <11 0x2>; // falling edge
                 spi-max-frequency = <4000000>;
-		sdn_pin = <13>;
+                sdn_pin = <13>;
                 status = "okay";
             };
         };
