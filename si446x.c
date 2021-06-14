@@ -189,7 +189,8 @@ static u8 wait_for_response(struct si446x *dev, void *out, u8 outLen,
     int response_count = 0;
     while (!get_response(dev, out, outLen))
     {
-        delay_us(10);
+        // delay_us(10);
+        delay_us(200);
         response_count++;
         if (useTimeout && !--timeout)
         {
