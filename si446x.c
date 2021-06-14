@@ -503,11 +503,14 @@ static void apply_startup_config(struct si446x *dev)
 {
     u8 buff[17];
     u16 i;
+    int counter = 0;
     for (i = 0; i < dev->config_len; i++)
     {
+        printk(KERN_INFO DRV_NAME ": %s starting loop %d\n", __func__, counter);
         memcpy(buff, &(dev->config[i]), sizeof(buff));
         si446x_do_api(dev, &buff[1], buff[0], NULL, 0);
         i += buff[0];
+        printk(KERN_INFO DRV_NAME ": %s finished loop %d, wrote %u bytes total %u bytes\n", __func__, counter++, buff[0], i);
     }
 }
 
