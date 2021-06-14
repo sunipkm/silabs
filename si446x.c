@@ -204,16 +204,17 @@ static void spi_write_buf(struct si446x *dev, void *out, u8 len)
     struct spi_device *spi;
     int ret;
     u8 i;
-    struct spi_transfer tx[1];
+    struct spi_transfer tx = {
+        .tx_buf = out,
+        .rx_buf = NULL,
+        .len = len,
+        .cs_change = 0,
+        .bits_per_word = 8
+    };
     spi = dev->spibus;
-    tx->tx_buf = out;
-    tx->rx_buf = NULL;
-    tx->len = len;
-    tx->cs_change = 0;
-    tx->bits_per_word = 8;
 
     mutex_lock(&(dev->lock));
-    ret = spi_sync_transfer(spi, tx, 1);
+    ret = spi_sync_transfer(spi, &tx, 1);
     mutex_unlock(&(dev->lock));
     printk(KERN_INFO DRV_NAME ": %s\n", __func__);
     for (i = 0; i < len; i++)
@@ -343,12 +344,13 @@ static u8 get_frr(struct si446x *dev, u8 reg)
         int ret;
         u8 i;
         u8 dout[2], din[2];
-        struct spi_transfer xfer[1];
-        xfer->tx_buf = dout;
-        xfer->rx_buf = din;
-        xfer->len = 2;
-        xfer->bits_per_word = 8;
-    xfer->cs_change = 0;
+        struct spi_transfer xfer = {
+            .tx_buf = dout,
+            .rx_buf = din,
+            .len = 2,
+            .bits_per_word = 8,
+            .cs_change = 0
+        };
 
         dout[0] = reg;
         dout[1] = 0xff;
@@ -357,7 +359,7 @@ static u8 get_frr(struct si446x *dev, u8 reg)
         spi = dev->spibus;
 
         mutex_lock(&(dev->lock));
-        ret = spi_sync_transfer(spi, xfer, 1);
+        ret = spi_sync_transfer(spi, &xfer, 1);
         mutex_unlock(&(dev->lock));
         printk(KERN_INFO DRV_NAME ": %s\n", __func__);
         for (i = 0; i < 2; i++)
@@ -676,19 +678,21 @@ static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
     u8 i;
     u8 *din = (uint8_t *)kmalloc(len + 1, GFP_NOWAIT);
     u8 *dout = (uint8_t *)kmalloc(len + 1, GFP_NOWAIT);
-    struct spi_transfer xfer[1];
-    xfer->tx_buf = dout;
-    xfer->rx_buf = din;
-    xfer->len = len + 1;
-    xfer->bits_per_word = 8;
-    xfer->cs_change = 0;
+    struct spi_transfer xfer = 
+    {
+        .tx_buf = dout,
+        .rx_buf = din,
+        .len = len + 1,
+        .bits_per_word = 8,
+        .cs_change = 0
+    };
 
     memset(dout, 0xff, len + 1);
     dout[0] = SI446X_CMD_READ_RX_FIFO;
     spi = dev->spibus;
 
     mutex_lock(&(dev->lock));
-    ret = spi_sync_transfer(spi, xfer, 1); // assuming negative on error, zero on success
+    ret = spi_sync_transfer(spi, &xfer, 1); // assuming negative on error, zero on success
     mutex_unlock(&(dev->lock));
     printk(KERN_INFO DRV_NAME ": %s\n", __func__);
     for (i = 0; i < len + 1; i++)
@@ -705,18 +709,20 @@ static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
 
 static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
 {
-    u8 *dout;
+    u8 *dout = (u8 *)kmalloc(len + 2, GFP_NOWAIT);
     int ret;
     u8 i;
     struct spi_device *spi;
-    struct spi_transfer xfer[1];
+    
+    
+    struct spi_transfer xfer = 
+    {
+        .tx_buf = dout,
+        .len = len + 2,
+        .bits_per_word = 8,
+        .cs_change = 0
+    };
 
-    dout = (u8 *)kmalloc(len + 2, GFP_NOWAIT);
-    xfer->tx_buf = dout;
-    xfer->rx_buf = NULL;
-    xfer->len = len + 2;
-    xfer->bits_per_word = 8;
-    xfer->cs_change = 0;
 
     memset(dout, 0xff, len + 1);
     dout[0] = SI446X_CMD_WRITE_TX_FIFO;
@@ -727,7 +733,7 @@ static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
     spi = dev->spibus;
 
     mutex_lock(&(dev->lock));
-    ret = spi_sync_transfer(spi, xfer, 1); // assuming negative on error, zero on success
+    ret = spi_sync_transfer(spi, &xfer, 1); // assuming negative on error, zero on success
     mutex_unlock(&(dev->lock));
 
     printk(KERN_INFO DRV_NAME ": %s\n", __func__);
