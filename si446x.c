@@ -17,7 +17,6 @@
 #include <linux/property.h>
 #include <linux/string.h>
 #include <linux/errno.h>
-#include <linux/skbuff.h>
 #include <linux/delay.h>
 #include <linux/spi/spi.h>
 #include <linux/device.h>
@@ -28,7 +27,6 @@
 #include <linux/gpio/consumer.h>
 #include <linux/delay.h>
 #include <linux/circ_buf.h>
-#include <linux/semaphore.h>
 #include <linux/platform_device.h>
 
 #include "si446x_kern.h"
@@ -43,7 +41,9 @@
 
 #define MAX_DEV 1
 
-dev_t device_num;
+static dev_t device_num = 0;
+
+static struct class *si446x_class;
 
 struct si446x
 {
@@ -67,6 +67,7 @@ struct si446x
     int rxbuf_len;               // rx buffer length
     bool data_available;         // indicate RX
     int init_ctr;                // module use counter
+    dev_t this_dev;              // this device
 };
 
 static DECLARE_WAIT_QUEUE_HEAD(rxq);
@@ -1146,6 +1147,12 @@ static int si446x_probe(struct spi_device *spi)
     int ret;
     ret = 0;
 
+    if (!spi)
+    {
+        printk(KERN_ERR DRV_NAME " spi is NULL, FATAL ERROR\n");
+        return -ENOMEM;
+    }
+
     printk(KERN_INFO DRV_NAME " driver is loaded\n");
 
     dev = kmalloc(sizeof(struct si446x), GFP_KERNEL);
@@ -1159,6 +1166,21 @@ static int si446x_probe(struct spi_device *spi)
         goto err_alloc_main;
     }
 
+    si446x_class = class_create(THIS_MODULE, DRV_NAME "_class");
+    if (!si446x_class)
+    {
+        ret = -ENOMEM;
+        printk(KERN_ERR DRV_NAME ": Error allocating memory for class\n");
+        goto err_alloc_main;
+    }
+
+    dev->rxbuf = kmalloc(sizeof(struct circ_buf), GFP_KERNEL);
+    if (!(dev->rxbuf))
+    {
+        ret = -ENOMEM;
+        printk(KERN_ERR DRV_NAME " Error allocating memory for receiver buffer\n");
+        goto err_main;
+    }
     if ((dev->rxbuf_len < SI446X_MAX_PACKET_LEN) || (dev->rxbuf_len > 128 * SI446X_MAX_PACKET_LEN)) // malloc
         dev->rxbuf_len = 16 * SI446X_MAX_PACKET_LEN;
     dev->rxbuf->buf = kzalloc(dev->rxbuf_len, GFP_KERNEL);
@@ -1166,7 +1188,7 @@ static int si446x_probe(struct spi_device *spi)
     {
         ret = -ENOMEM;
         printk(KERN_ERR DRV_NAME " Error allocating memory for receiver buffer\n");
-        goto err_main;
+        goto err_alloc_buf;
     }
     printk(KERN_INFO DRV_NAME " buff mem allocated\n");
     ret = alloc_chrdev_region(&device_num, 0, MAX_DEV, DEVICE_NAME);
@@ -1188,6 +1210,11 @@ static int si446x_probe(struct spi_device *spi)
         {
             printk(KERN_ERR DRV_NAME " Error adding serial device interface for major %d minor %d\n", ma, mi);
             goto err_init_serial;
+        }
+        else
+        {
+            dev->this_dev = this_dev;
+            device_create(si446x_class, &(spi->dev), this_dev, dev, DEVICE_NAME "%d", mi);
         }
     }
     else
@@ -1247,6 +1274,8 @@ static int si446x_probe(struct spi_device *spi)
     return 0;
 err_init_serial:
     kfree(dev->rxbuf->buf);
+err_alloc_buf:
+    kfree(dev->rxbuf);
 err_main:
     kfree(dev);
 err_alloc_main:
@@ -1265,8 +1294,12 @@ static int si446x_remove(struct spi_device *spi)
     for (i = 0; i < 3; i++)
         dev->enabledInterrupts[i] = 0;
     cdev_del(&(dev->serdev));
+    device_destroy(si446x_class, dev->this_dev);
+    class_destroy(si446x_class);
+    unregister_chrdev_region(device_num, 1);
     gpio_free(dev->sdn_pin);
     free_irq(spi->irq, dev);
+    kfree(dev->rxbuf);
     kfree(dev);
     return 0;
 }
