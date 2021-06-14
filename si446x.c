@@ -153,7 +153,9 @@ static unsigned char get_response(struct si446x *dev, void *buff, unsigned char 
     dout[0] = SI446X_CMD_READ_CMD_BUFF;
 
     mutex_lock(&(dev->lock));
+    spi_bus_lock(spi->controller);
     ret = spi_sync_transfer(spi, xfer, 1);
+    spi_bus_unlock(spi->controller);
     mutex_unlock(&(dev->lock));
     if (ret != 0)
     {
