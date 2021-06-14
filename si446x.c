@@ -191,14 +191,13 @@ static u8 wait_for_response(struct si446x *dev, void *out, u8 outLen,
     while (!get_response(dev, out, outLen))
     {
         // delay_us(10);
-        delay_us(200);
+        delay_ms(1);
         response_count++;
         if (useTimeout && !--timeout)
         {
             SI446X_CB_CMDTIMEOUT();
             return 0;
         }
-        printk(KERN_INFO DRV_NAME ": %s loop ctr %d", __func__, response_count);
     }
     printk(KERN_INFO DRV_NAME ": %s counter: %d, get_response wait: %d\n", __func__, count++, response_count);
     return 1;
