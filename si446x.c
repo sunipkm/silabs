@@ -1175,6 +1175,8 @@ static int si446x_probe(struct spi_device *spi)
         return -ENOMEM;
     }
 
+    spi->mode = SPI_MODE_0;
+
     printk(KERN_INFO DRV_NAME ": driver is loaded\n");
 
     dev = kmalloc(sizeof(struct si446x), GFP_KERNEL);
@@ -1210,7 +1212,7 @@ static int si446x_probe(struct spi_device *spi)
         goto err_main;
     }
     printk(KERN_INFO DRV_NAME ": SDN pin: %d\n", sdn_pin);
-    ret = gpio_request(dev->sdn_pin, DRV_NAME);
+    ret = gpio_request(sdn_pin, DRV_NAME "_gpio_sdn");
     if (ret)
     {
         printk(KERN_ERR DRV_NAME ": Error requesting gpio pin %d, status %d\n", sdn_pin, ret);
@@ -1230,7 +1232,7 @@ static int si446x_probe(struct spi_device *spi)
         ret = -ENODEV;
         goto err_main;
     }
-    ret = gpio_request(nirq_pin, DRV_NAME "IRQ");
+    ret = gpio_request(nirq_pin, DRV_NAME "_gpio_nirq");
     if (ret)
     {
         printk(KERN_ERR DRV_NAME ": Error requesting gpio pin %d, status %d\n", nirq_pin, ret);
