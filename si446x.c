@@ -157,13 +157,11 @@ static unsigned char get_response(struct si446x *dev, void *buff, unsigned char 
     mutex_lock(&(dev->lock));
     ret = spi_sync_transfer(spi, &xfer, 1);
     mutex_unlock(&(dev->lock));
-    printk(KERN_INFO DRV_NAME ": %s transferred\n", __func__);
     if (ret != 0)
     {
         printk(KERN_ERR DRV_NAME
                "Error in spi transaction get_response, retcode %d\n",
                ret);
-        cts = 0xff; // hack
         goto cleanup;
     }
     // printk(KERN_INFO DRV_NAME ": %s\n", __func__);
@@ -216,7 +214,6 @@ static void spi_write_buf(struct si446x *dev, void *out, u8 len)
     mutex_lock(&(dev->lock));
     ret = spi_sync_transfer(spi, &tx, 1);
     mutex_unlock(&(dev->lock));
-    printk(KERN_INFO DRV_NAME ": %s\n", __func__);
     for (i = 0; i < len; i++)
         printk(KERN_INFO DRV_NAME ": %u -> Out: %u\n", i, ((u8 *)out)[i]);
     if (ret != 0)
