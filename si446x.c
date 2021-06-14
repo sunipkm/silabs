@@ -76,22 +76,18 @@ static DECLARE_WAIT_QUEUE_HEAD(rxq);
 
 static inline int interrupt_off(struct si446x *dev)
 {
-    static int counter = 0;
     if ((dev->isr_state) == 0)
         mutex_lock(&(dev->isr_lock)); // prevent ISR from running
     dev->isr_state++;
-    printk(KERN_INFO DRV_NAME ": %s run %d, post: %d\n", __func__, counter++, dev->isr_state);
     return 1;
 }
 
 static inline int interrupt_on(struct si446x *dev)
 {
-    static int counter = 0;
     if (dev->isr_state > 0)
         dev->isr_state--;
     if (dev->isr_state == 0)
         mutex_unlock(&(dev->isr_lock)); // Allow ISR to run
-    printk(KERN_INFO DRV_NAME ": %s run %d, post: %d\n", __func__, counter++, dev->isr_state);
     return 0;
 }
 
@@ -168,9 +164,6 @@ static unsigned char get_response(struct si446x *dev, void *buff, unsigned char 
                ret);
         goto cleanup;
     }
-    // printk(KERN_INFO DRV_NAME ": %s\n", __func__);
-    // for (i = 0; i < len + 2; i++)
-    //     printk(KERN_INFO DRV_NAME ": %u -> Out: %u | In: %u\n", i, dout[i], din[i]);
     cts = din[1];
     if (cts)
     {
@@ -187,23 +180,17 @@ cleanup:
 static u8 wait_for_response(struct si446x *dev, void *out, u8 outLen,
                             bool useTimeout)
 {
-    static int count = 0;
     // With F_CPU at 8MHz and SPI at 4MHz each check takes about 7us + 10us delay
     u16 timeout = 40000;
-    int response_count = 0;
-    printk(KERN_INFO DRV_NAME ": %s counter: %d, use timeout: %d\n", __func__, count, useTimeout);
     while (!get_response(dev, out, outLen))
     {
-        // delay_us(10);
-        delay_ms(1);
-        response_count++;
+        delay_us(10);
         if (useTimeout && !--timeout)
         {
             SI446X_CB_CMDTIMEOUT();
             return 0;
         }
     }
-    printk(KERN_INFO DRV_NAME ": %s counter: %d, get_response wait: %d\n", __func__, count++, response_count);
     return 1;
 }
 
@@ -225,9 +212,6 @@ static void spi_write_buf(struct si446x *dev, void *out, u8 len)
     mutex_lock(&(dev->lock));
     ret = spi_sync_transfer(spi, &tx, 1);
     mutex_unlock(&(dev->lock));
-    printk(KERN_INFO DRV_NAME ": %s xfer count: %d\n", __func__, ++count);
-    for (i = 0; i < len; i++)
-        printk(KERN_INFO DRV_NAME ": %u -> Out: %u\n", i, ((u8 *)out)[i]);
     if (ret != 0)
     {
         printk(KERN_ERR DRV_NAME
@@ -239,11 +223,8 @@ static void spi_write_buf(struct si446x *dev, void *out, u8 len)
 static void si446x_do_api(struct si446x *dev, void *data, u8 len, void *out,
                           u8 outLen)
 {
-    printk(KERN_INFO DRV_NAME ": Starting doAPI");
-    static int counter = 0;
     int ret;
     ret = interrupt_off(dev);
-    printk(KERN_INFO DRV_NAME ": Starting doAPI %d\n", counter);
     {
         if (wait_for_response(dev, NULL, 0,
                               1)) // Make sure it's ok to send a command
@@ -257,7 +238,6 @@ static void si446x_do_api(struct si446x *dev, void *data, u8 len, void *out,
                 wait_for_response(dev, out, outLen, 1);
         }
     }
-    printk(KERN_INFO DRV_NAME ": Finishing doAPI %d\n", counter++);
     ret = interrupt_on(dev);
 }
 
@@ -375,9 +355,6 @@ static u8 get_frr(struct si446x *dev, u8 reg)
         mutex_lock(&(dev->lock));
         ret = spi_sync_transfer(spi, &xfer, 1);
         mutex_unlock(&(dev->lock));
-        printk(KERN_INFO DRV_NAME ": %s\n", __func__);
-        for (i = 0; i < 2; i++)
-            printk(KERN_INFO DRV_NAME ": %u -> Out: %u | In: %u\n", i, dout[i], din[i]);
         if (ret != 0)
         {
             printk(KERN_ERR DRV_NAME
@@ -711,9 +688,6 @@ static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
     mutex_lock(&(dev->lock));
     ret = spi_sync_transfer(spi, &xfer, 1); // assuming negative on error, zero on success
     mutex_unlock(&(dev->lock));
-    printk(KERN_INFO DRV_NAME ": %s\n", __func__);
-    for (i = 0; i < len + 1; i++)
-        printk(KERN_INFO DRV_NAME ": %u -> Out: %u | In: %u\n", i, dout[i], din[i]);
     if (ret)
     {
         printk(KERN_ERR DRV_NAME "Error in internal read\n");
@@ -753,9 +727,6 @@ static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
     ret = spi_sync_transfer(spi, &xfer, 1); // assuming negative on error, zero on success
     mutex_unlock(&(dev->lock));
 
-    printk(KERN_INFO DRV_NAME ": %s\n", __func__);
-    for (i = 0; i < len + 2; i++)
-        printk(KERN_INFO DRV_NAME ": %u -> Out: %u\n", i, dout[i]);
     if (ret)
     {
         printk(KERN_ERR DRV_NAME "Error in internal write\n");
