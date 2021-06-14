@@ -145,6 +145,7 @@ static unsigned char get_response(struct si446x *dev, void *buff, unsigned char 
     xfer->tx_buf = dout;
     xfer->rx_buf = din;
     xfer->len = len + 2;
+    xfer->bits_per_word = 8;
     xfer->cs_change = 0;
     spi = dev->spibus;
 
@@ -207,6 +208,8 @@ static void spi_write_buf(struct si446x *dev, void *out, u8 len)
     tx->tx_buf = out;
     tx->rx_buf = NULL;
     tx->len = len;
+    tx->cs_change = 0;
+    tx->bits_per_word = 8;
 
     mutex_lock(&(dev->lock));
     ret = spi_sync_transfer(spi, tx, 1);
@@ -343,7 +346,8 @@ static u8 get_frr(struct si446x *dev, u8 reg)
         xfer->tx_buf = dout;
         xfer->rx_buf = din;
         xfer->len = 2;
-        xfer->cs_change = 0;
+        xfer->bits_per_word = 8;
+    xfer->cs_change = 0;
 
         dout[0] = reg;
         dout[1] = 0xff;
@@ -675,6 +679,7 @@ static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
     xfer->tx_buf = dout;
     xfer->rx_buf = din;
     xfer->len = len + 1;
+    xfer->bits_per_word = 8;
     xfer->cs_change = 0;
 
     memset(dout, 0xff, len + 1);
@@ -709,6 +714,7 @@ static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
     xfer->tx_buf = dout;
     xfer->rx_buf = NULL;
     xfer->len = len + 2;
+    xfer->bits_per_word = 8;
     xfer->cs_change = 0;
 
     memset(dout, 0xff, len + 1);
