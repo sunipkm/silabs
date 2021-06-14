@@ -157,6 +157,7 @@ static unsigned char get_response(struct si446x *dev, void *buff, unsigned char 
     ret = spi_sync_transfer(spi, xfer, 1);
     spi_bus_unlock(spi->controller);
     mutex_unlock(&(dev->lock));
+    printk(KERN_INFO DRV_NAME ": %s transferred\n", __func__);
     if (ret != 0)
     {
         printk(KERN_ERR DRV_NAME
