@@ -136,17 +136,18 @@ static unsigned char get_response(struct si446x *dev, void *buff, unsigned char 
 {
     u8 cts;
     int ret;
-    struct spi_transfer xfer[1];
-    struct spi_device *spi;
-    // u8 i;
     u8 *dout = (u8 *)kmalloc(len + 2, GFP_NOWAIT); // 1 for cmd, 1 for cts
     u8 *din = (u8 *)kzalloc(len + 2, GFP_NOWAIT);  // no need to memset input
+    struct spi_transfer xfer = {
+        .tx_buf = dout,
+        .rx_buf = din,
+        .len = len + 2,
+        .bits_per_word = 8,
+        .cs_change = 0
+    };
+    struct spi_device *spi;
+    // u8 i;
     cts = 0;
-    xfer->tx_buf = dout;
-    xfer->rx_buf = din;
-    xfer->len = len + 2;
-    xfer->bits_per_word = 8;
-    xfer->cs_change = 0;
     spi = dev->spibus;
 
     // set command
@@ -154,7 +155,7 @@ static unsigned char get_response(struct si446x *dev, void *buff, unsigned char 
     dout[0] = SI446X_CMD_READ_CMD_BUFF;
 
     mutex_lock(&(dev->lock));
-    ret = spi_sync_transfer(spi, xfer, 1);
+    ret = spi_sync_transfer(spi, &xfer, 1);
     mutex_unlock(&(dev->lock));
     printk(KERN_INFO DRV_NAME ": %s transferred\n", __func__);
     if (ret != 0)
