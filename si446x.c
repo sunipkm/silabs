@@ -143,7 +143,7 @@ static unsigned char get_response(struct si446x *dev, void *buff, unsigned char 
         .rx_buf = din,
         .len = len + 2,
         .bits_per_word = 8,
-        .cs_change = 0
+        // .cs_change = 0
     };
     struct spi_device *spi;
     // u8 i;
@@ -206,7 +206,7 @@ static void spi_write_buf(struct si446x *dev, void *out, u8 len)
         .tx_buf = out,
         .rx_buf = NULL,
         .len = len,
-        .cs_change = 0,
+        // .cs_change = 0,
         .bits_per_word = 8
     };
     spi = dev->spibus;
@@ -346,7 +346,7 @@ static u8 get_frr(struct si446x *dev, u8 reg)
             .rx_buf = din,
             .len = 2,
             .bits_per_word = 8,
-            .cs_change = 0
+            // .cs_change = 0
         };
 
         dout[0] = reg;
@@ -681,7 +681,7 @@ static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
         .rx_buf = din,
         .len = len + 1,
         .bits_per_word = 8,
-        .cs_change = 0
+        // .cs_change = 0
     };
 
     memset(dout, 0xff, len + 1);
@@ -717,7 +717,7 @@ static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
         .tx_buf = dout,
         .len = len + 2,
         .bits_per_word = 8,
-        .cs_change = 0
+        // .cs_change = 0
     };
 
 
