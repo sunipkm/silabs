@@ -1186,12 +1186,68 @@ static int si446x_probe(struct spi_device *spi)
         goto err_alloc_main;
     }
 
+    pdev = &(spi->dev);
+    printk(KERN_INFO DRV_NAME " platform device %p\n", pdev);
+
+    dev->spibus = spi;
+
+    spi_set_drvdata(spi, dev);
+    printk(KERN_INFO DRV_NAME " spi drvdata set, %p = %p\n", spi, spi_get_drvdata(spi));
+
+    if (of_property_read_s32(pdev->of_node, "sdn_pin", &(dev->sdn_pin)))
+    {
+        printk(KERN_ERR DRV_NAME " Error reading SDN pin number, read %d\n", dev->sdn_pin);
+        ret = -ENODATA;
+        goto err_main;
+    }
+
+    if (of_property_read_s32(pdev->of_node, "irq_pin", &(dev->nirq_pin)))
+    {
+        printk(KERN_ERR DRV_NAME ": Error reading IRQ pin number, read %d\n", dev->nirq_pin);
+        ret = -ENODATA;
+        goto err_main;
+    }
+    printk(KERN_INFO DRV_NAME " SDN pin: %d\n", dev->sdn_pin);
+    ret = gpio_request(dev->sdn_pin, DRV_NAME);
+    if (ret)
+    {
+        printk(KERN_ERR DRV_NAME "Error requesting gpio pin %d, status %d\n", dev->sdn_pin, ret);
+        ret = -ENODEV;
+        goto err_main;
+    }
+    if (!gpio_is_valid(dev->sdn_pin))
+    {
+        printk(KERN_ERR DRV_NAME "%d not valid GPIO pin\n", dev->sdn_pin);
+        ret = -ENODEV;
+        goto err_main;
+    }
+    ret = gpio_direction_output(dev->sdn_pin, 0);
+    if (ret)
+    {
+        printk(KERN_ERR DRV_NAME "Error %d setting GPIO output direction\n", ret);
+        ret = -ENODEV;
+        goto err_main;
+    }
+    ret = gpio_request(dev->nirq_pin, DRV_NAME "IRQ");
+    if (ret)
+    {
+        printk(KERN_ERR DRV_NAME "Error requesting gpio pin %d, status %d\n", dev->nirq_pin, ret);
+        ret = -ENODEV;
+        goto err_main;
+    }
+    if (!gpio_is_valid(dev->nirq_pin))
+    {
+        printk(KERN_ERR DRV_NAME "%d not valid GPIO pin\n", dev->nirq_pin);
+        ret = -ENODEV;
+        goto err_main;
+    }
+
     si446x_class = class_create(THIS_MODULE, DRV_NAME "_class");
     if (!si446x_class)
     {
         ret = -ENOMEM;
         printk(KERN_ERR DRV_NAME ": Error allocating memory for class\n");
-        goto err_alloc_main;
+        goto err_main;
     }
 
     dev->rxbuf = kmalloc(sizeof(struct circ_buf), GFP_KERNEL);
@@ -1244,61 +1300,6 @@ static int si446x_probe(struct spi_device *spi)
         goto err_init_serial;
     }
 
-    pdev = &(spi->dev);
-    printk(KERN_INFO DRV_NAME " platform device %p\n", pdev);
-
-    dev->spibus = spi;
-
-    spi_set_drvdata(spi, dev);
-    printk(KERN_INFO DRV_NAME " spi drvdata set, %p = %p\n", spi, spi_get_drvdata(spi));
-
-    if (of_property_read_s32(pdev->of_node, "sdn_pin", &(dev->sdn_pin)))
-    {
-        printk(KERN_ERR DRV_NAME " Error reading SDN pin number, read %d\n", dev->sdn_pin);
-        ret = -ENODATA;
-        goto err_init_serial;
-    }
-
-    if (of_property_read_s32(pdev->of_node, "irq_pin", &(dev->nirq_pin)))
-    {
-        printk(KERN_ERR DRV_NAME ": Error reading IRQ pin number, read %d\n", dev->nirq_pin);
-        ret = -ENODATA;
-        goto err_init_serial;
-    }
-    printk(KERN_INFO DRV_NAME " SDN pin: %d\n", dev->sdn_pin);
-    ret = gpio_request(dev->sdn_pin, DRV_NAME);
-    if (ret)
-    {
-        printk(KERN_ERR DRV_NAME "Error requesting gpio pin %d, status %d\n", dev->sdn_pin, ret);
-        ret = -ENODEV;
-        goto err_init_serial;
-    }
-    if (!gpio_is_valid(dev->sdn_pin))
-    {
-        printk(KERN_ERR DRV_NAME "%d not valid GPIO pin\n", dev->sdn_pin);
-        ret = -ENODEV;
-        goto err_init_serial;
-    }
-    ret = gpio_direction_output(dev->sdn_pin, 0);
-    if (ret)
-    {
-        printk(KERN_ERR DRV_NAME "Error %d setting GPIO output direction\n", ret);
-        ret = -ENODEV;
-        goto err_init_serial;
-    }
-    ret = gpio_request(dev->nirq_pin, DRV_NAME "IRQ");
-    if (ret)
-    {
-        printk(KERN_ERR DRV_NAME "Error requesting gpio pin %d, status %d\n", dev->nirq_pin, ret);
-        ret = -ENODEV;
-        goto err_init_serial;
-    }
-    if (!gpio_is_valid(dev->sdn_pin))
-    {
-        printk(KERN_ERR DRV_NAME "%d not valid GPIO pin\n", dev->nirq_pin);
-        ret = -ENODEV;
-        goto err_init_serial;
-    }
     mutex_init(&(dev->lock));
     mutex_init(&(dev->isr_lock));
     dev->isr_state = 0;
