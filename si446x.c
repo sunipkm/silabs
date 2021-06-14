@@ -135,7 +135,7 @@ void __attribute__((weak, alias("__empty_callback0"))) SI446X_CB_LOWBATT(void);
 static unsigned char get_response(struct si446x *dev, void *buff, unsigned char len)
 {
     u8 cts;
-    u8 i;
+    // u8 i;
     u8 *dout = (u8 *)kmalloc(len + 2, GFP_NOWAIT); // 1 for cmd, 1 for cts
     u8 *din = (u8 *)kzalloc(len + 2, GFP_NOWAIT);  // no need to memset input
     cts = 0;
@@ -168,9 +168,9 @@ static unsigned char get_response(struct si446x *dev, void *buff, unsigned char 
                ret);
         goto cleanup;
     }
-    printk(KERN_INFO DRV_NAME ": %s\n", __func__);
-    for (i = 0; i < len + 2; i++)
-        printk(KERN_INFO DRV_NAME ": %u -> Out: %u | In: %u\n", i, dout[i], din[i]);
+    // printk(KERN_INFO DRV_NAME ": %s\n", __func__);
+    // for (i = 0; i < len + 2; i++)
+    //     printk(KERN_INFO DRV_NAME ": %u -> Out: %u | In: %u\n", i, dout[i], din[i]);
     cts = din[1];
     if (cts)
     {
@@ -391,9 +391,11 @@ static u8 get_frr(struct si446x *dev, u8 reg)
 
 void si446x_get_info(struct si446x *dev, si446x_info_t *info)
 {
-    u8 data[8] = {
-        SI446X_CMD_PART_INFO};
-    si446x_do_api(dev, data, 1, data, 8);
+    u8 out[1];
+    u8 data[8];
+
+    out[0] = SI446X_CMD_PART_INFO;
+    si446x_do_api(dev, out, 1, data, 8);
 
     info->chipRev = data[0];
     info->part = (data[1] << 8) | data[2];
@@ -402,8 +404,8 @@ void si446x_get_info(struct si446x *dev, si446x_info_t *info)
     info->customer = data[6];
     info->romId = data[7];
 
-    data[0] = SI446X_CMD_FUNC_INFO;
-    si446x_do_api(dev, data, 1, data, 6);
+    out[0] = SI446X_CMD_FUNC_INFO;
+    si446x_do_api(dev, out, 1, data, 6);
 
     info->revExternal = data[0];
     info->revBranch = data[1];
