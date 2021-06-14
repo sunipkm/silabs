@@ -134,9 +134,11 @@ void __attribute__((weak, alias("__empty_callback0"))) SI446X_CB_LOWBATT(void);
 
 static unsigned char get_response(struct si446x *dev, void *buff, unsigned char len)
 {
-    u8 cts = 0;
+    u8 cts;
+    u8 i;
     u8 *dout = (u8 *)kmalloc(len + 2, GFP_NOWAIT); // 1 for cmd, 1 for cts
     u8 *din = (u8 *)kzalloc(len + 2, GFP_NOWAIT);  // no need to memset input
+    cts = 0;
     struct spi_transfer tx = {
         .tx_buf = dout,
         .len = len + 2,
@@ -166,6 +168,9 @@ static unsigned char get_response(struct si446x *dev, void *buff, unsigned char 
                ret);
         goto cleanup;
     }
+    printk(KERN_INFO DRV_NAME ": %s\n", __func__);
+    for (i = 0; i < len + 2; i++)
+        printk(KERN_INFO DRV_NAME ": %u -> Out: %u | In: %u\n", i, dout[i], din[i]);
     cts = din[1];
     if (cts)
     {
@@ -198,8 +203,10 @@ static u8 wait_for_response(struct si446x *dev, void *out, u8 outLen,
 
 static void spi_write_buf(struct si446x *dev, void *out, u8 len)
 {
-    struct spi_device *spi = dev->spibus;
+    struct spi_device *spi;
     int ret;
+    u8 i;
+    spi = dev->spibus;
     struct spi_transfer tx = {
         .tx_buf = out,
         .len = len,
@@ -217,6 +224,9 @@ static void spi_write_buf(struct si446x *dev, void *out, u8 len)
     mutex_lock(&(dev->lock));
     ret = spi_sync(spi, &msg);
     mutex_unlock(&(dev->lock));
+    printk(KERN_INFO DRV_NAME ": %s\n", __func__);
+    for (i = 0; i < len; i++)
+        printk(KERN_INFO DRV_NAME ": %u -> Out: %u\n", i, ((u8 *)out)[i]);
     if (ret != 0)
     {
         printk(KERN_ERR DRV_NAME
@@ -340,7 +350,8 @@ static u8 get_frr(struct si446x *dev, u8 reg)
     {
         struct spi_device *spi;
         int ret;
-        uint8_t dout[2], din[2];
+        u8 i;
+        u8 dout[2], din[2];
         struct spi_transfer tx = {
             .tx_buf = dout,
             .len = 2,
@@ -364,6 +375,9 @@ static u8 get_frr(struct si446x *dev, u8 reg)
         mutex_lock(&(dev->lock));
         ret = spi_sync(spi, &msg);
         mutex_unlock(&(dev->lock));
+        printk(KERN_INFO DRV_NAME ": %s\n", __func__);
+        for (i = 0; i < 2; i++)
+            printk(KERN_INFO DRV_NAME ": %u -> Out: %u | In: %u\n", i, dout[i], din[i]);
         if (ret != 0)
         {
             printk(KERN_ERR DRV_NAME
@@ -673,15 +687,16 @@ static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
 {
     struct spi_device *spi;
     int ret;
+    u8 i;
     u8 *din = (uint8_t *)kmalloc(len + 1, GFP_NOWAIT);
     u8 *dout = (uint8_t *)kmalloc(len + 1, GFP_NOWAIT);
     struct spi_transfer tx = {
         .tx_buf = dout,
-        .len = 2,
+        .len = len + 1,
     };
     struct spi_transfer rx = {
         .rx_buf = din,
-        .len = 2,
+        .len = len + 1,
     };
     struct spi_message msg;
     memset(dout, 0xff, len + 1);
@@ -694,6 +709,9 @@ static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
     mutex_lock(&(dev->lock));
     ret = spi_sync(spi, &msg); // assuming negative on error, zero on success
     mutex_unlock(&(dev->lock));
+    printk(KERN_INFO DRV_NAME ": %s\n", __func__);
+    for (i = 0; i < len + 1; i++)
+        printk(KERN_INFO DRV_NAME ": %u -> Out: %u | In: %u\n", i, dout[i], din[i]);
     if (ret)
     {
         printk(KERN_ERR DRV_NAME "Error in internal read\n");
@@ -708,6 +726,7 @@ static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
 {
     u8 *dout;
     int ret;
+    u8 i;
     struct spi_message msg;
     struct spi_device *spi;
     dout = (u8 *)kmalloc(len + 2, GFP_NOWAIT);
@@ -730,6 +749,9 @@ static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
     mutex_lock(&(dev->lock));
     ret = spi_sync(spi, &msg); // assuming negative on error, zero on success
     mutex_unlock(&(dev->lock));
+    printk(KERN_INFO DRV_NAME ": %s\n", __func__);
+    for (i = 0; i < len + 2; i++)
+        printk(KERN_INFO DRV_NAME ": %u -> Out: %u\n", i, dout[i]);
     if (ret)
     {
         printk(KERN_ERR DRV_NAME "Error in internal write\n");
