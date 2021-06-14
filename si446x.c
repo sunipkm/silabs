@@ -1345,6 +1345,7 @@ static int si446x_remove(struct spi_device *spi)
     class_destroy(si446x_class);
     unregister_chrdev_region(device_num, 1);
     gpio_free(dev->sdn_pin);
+    gpio_free(dev->nirq_pin);
     free_irq(spi->irq, dev);
     kfree(dev->rxbuf);
     kfree(dev);
