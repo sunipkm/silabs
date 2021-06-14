@@ -48,26 +48,28 @@ static struct class *si446x_class;
 struct si446x
 {
     struct cdev serdev;
-    struct spi_device *spibus;   // spi bus
-    struct mutex lock;           // mutex lock
-    struct work_struct irq_work; // IRQ handler
-    int sdn_pin;                 // sdn pin
-    int nirq_pin;                // IRQ pin
-    int cs_pin;                  // chip select gpio
-    u32 tx_pk_ctr;               // stat for tx packets
-    u32 rx_pk_ctr;               // stat for rx packets
-    u32 rx_corrupt_ctr;          // stat for corrupt rx packets
-    unsigned int isr_state;      // ISR lock state
-    struct mutex isr_lock;       // mutex lock to prevent ISR from running
-    u8 *config;                  // initialize as RADIO_CONFIGURATION_DATA_ARRAY
-    u32 config_len;              // length of RADIO_CONFIGURATION_DATA_ARRAY
-    u8 enabledInterrupts[3];     // enabled interrupts
-    s16 rssi;                    // RSSI value returned by ioctl
-    struct circ_buf *rxbuf;      // RX data buffer
-    int rxbuf_len;               // rx buffer length
-    bool data_available;         // indicate RX
-    int init_ctr;                // module use counter
-    dev_t this_dev;              // this device
+    struct spi_device *spibus;    // spi bus
+    struct mutex lock;            // mutex lock
+    struct work_struct irq_work;  // IRQ handler
+    struct work_struct init_work; // INIT handler
+    int sdn_pin;                  // sdn pin
+    int nirq_pin;                 // IRQ pin
+    int cs_pin;                   // chip select gpio
+    u32 tx_pk_ctr;                // stat for tx packets
+    u32 rx_pk_ctr;                // stat for rx packets
+    u32 rx_corrupt_ctr;           // stat for corrupt rx packets
+    unsigned int isr_state;       // ISR lock state
+    struct mutex isr_lock;        // mutex lock to prevent ISR from running
+    u8 *config;                   // initialize as RADIO_CONFIGURATION_DATA_ARRAY
+    u32 config_len;               // length of RADIO_CONFIGURATION_DATA_ARRAY
+    u8 enabledInterrupts[3];      // enabled interrupts
+    s16 rssi;                     // RSSI value returned by ioctl
+    struct circ_buf *rxbuf;       // RX data buffer
+    int rxbuf_len;                // rx buffer length
+    bool data_available;          // indicate RX
+    int init_ctr;                 // module use counter
+    dev_t this_dev;               // this device
+    struct completion initq;      // init queue
 };
 
 static DECLARE_WAIT_QUEUE_HEAD(rxq);
@@ -774,12 +776,41 @@ ret:
     return retcode;
 }
 
+static void si446x_init_work_handler(struct work_struct *work)
+{
+    struct si446x *dev;
+    dev = container_of(work, struct si446x, init_work);
+    dev->data_available = false;
+    dev->rxbuf->head = 0;
+    dev->rxbuf->tail = 0;
+    reset_device(dev);
+    printk(KERN_INFO DRV_NAME ": Device reset\n");
+    u8 conf[] = RADIO_CONFIGURATION_DATA_ARRAY;
+    dev->config_len = sizeof(conf);
+    dev->config = kmalloc(dev->config_len, GFP_NOWAIT);
+    memcpy(dev->config, conf, dev->config_len);
+    printk(KERN_INFO DRV_NAME ": Applying startup config\n");
+    apply_startup_config(dev);
+    printk(KERN_INFO DRV_NAME ": Applied startup config\n");
+    kfree(dev->config);
+    interrupt(dev, NULL);
+    printk(KERN_INFO DRV_NAME ": Cleared IRQ vector\n");
+    si446x_sleep(dev);
+    printk(KERN_INFO DRV_NAME ": Device in sleep mode\n");
+    dev->enabledInterrupts[IRQ_PACKET] = (1 << SI446X_PACKET_RX_PEND) | (1 << SI446X_CRC_ERROR_PEND);
+    si446x_setup_callback(dev, SI446X_CBS_RXBEGIN, 1); // enable receive irq
+    printk(KERN_INFO DRV_NAME ": Receive callback set\n");
+    complete(&(dev->initq));
+    printk(KERN_INFO DRV_NAME ": Signalled end of init\n");
+}
+
 static void si446x_irq_work_handler(struct work_struct *work)
 {
     int irq_avail;
     u8 len;
     bool read_rx_fifo = false;
-    struct si446x *dev = container_of(work, struct si446x, irq_work);
+    struct si446x *dev;
+    dev = container_of(work, struct si446x, irq_work);
     mutex_lock(&(dev->isr_lock));
     while ((irq_avail = gpio_get_value(dev->nirq_pin)) == 0) // IRQ low
     {
@@ -933,20 +964,9 @@ static int si446x_open(struct inode *inod, struct file *filp)
     // do stuff for init, like putting the device in receive mode
     if (!(dev->init_ctr)) // device not initialized
     {
-        dev->data_available = false;
-        dev->rxbuf->head = 0;
-        dev->rxbuf->tail = 0;
-        reset_device(dev);
-        u8 conf[] = RADIO_CONFIGURATION_DATA_ARRAY;
-        dev->config_len = sizeof(conf);
-        dev->config = kmalloc(dev->config_len, GFP_NOWAIT);
-        memcpy(dev->config, conf, dev->config_len);
-        apply_startup_config(dev);
-        kfree(dev->config);
-        interrupt(dev, NULL);
-        si446x_sleep(dev);
-        dev->enabledInterrupts[IRQ_PACKET] = (1 << SI446X_PACKET_RX_PEND) | (1 << SI446X_CRC_ERROR_PEND);
-        si446x_setup_callback(dev, SI446X_CBS_RXBEGIN, 1); // enable receive irq
+        init_completion((&(dev->initq))->done);
+        schedule_work(&(dev->init_work));
+        wait_for_completion_interruptible(&(dev->initq));
     }
     dev->init_ctr++;
     try_module_get(THIS_MODULE); // increment use count
@@ -1235,6 +1255,14 @@ static int si446x_probe(struct spi_device *spi)
     if (of_property_read_s32(pdev->of_node, "sdn_pin", &(dev->sdn_pin)))
     {
         printk(KERN_ERR DRV_NAME " Error reading SDN pin number, read %d\n", dev->sdn_pin);
+        ret = -ENODATA;
+        goto err_init_serial;
+    }
+
+    if (of_property_read_s32(pdev->of_node, "irq_pin", &(dev->nirq_pin)))
+    {
+        printk(KERN_ERR DRV_NAME ": Error reading IRQ pin number, read %d\n", dev->nirq_pin);
+        ret = -ENODATA;
         goto err_init_serial;
     }
     printk(KERN_INFO DRV_NAME " SDN pin: %d\n", dev->sdn_pin);
@@ -1242,17 +1270,33 @@ static int si446x_probe(struct spi_device *spi)
     if (ret)
     {
         printk(KERN_ERR DRV_NAME "Error requesting gpio pin %d, status %d\n", dev->sdn_pin, ret);
+        ret = -ENODEV;
         goto err_init_serial;
     }
     if (!gpio_is_valid(dev->sdn_pin))
     {
         printk(KERN_ERR DRV_NAME "%d not valid GPIO pin\n", dev->sdn_pin);
+        ret = -ENODEV;
         goto err_init_serial;
     }
     ret = gpio_direction_output(dev->sdn_pin, 0);
     if (ret)
     {
         printk(KERN_ERR DRV_NAME "Error %d setting GPIO output direction\n", ret);
+        ret = -ENODEV;
+        goto err_init_serial;
+    }
+    ret = gpio_request(dev->nirq_pin, DRV_NAME "IRQ");
+    if (ret)
+    {
+        printk(KERN_ERR DRV_NAME "Error requesting gpio pin %d, status %d\n", dev->nirq_pin, ret);
+        ret = -ENODEV;
+        goto err_init_serial;
+    }
+    if (!gpio_is_valid(dev->sdn_pin))
+    {
+        printk(KERN_ERR DRV_NAME "%d not valid GPIO pin\n", dev->nirq_pin);
+        ret = -ENODEV;
         goto err_init_serial;
     }
     mutex_init(&(dev->lock));
@@ -1262,6 +1306,7 @@ static int si446x_probe(struct spi_device *spi)
     dev->enabledInterrupts[1] = 0;
     dev->enabledInterrupts[2] = 0;
     INIT_WORK(&(dev->irq_work), si446x_irq_work_handler);
+    INIT_WORK(&(dev->init_work), si446x_init_work_handler);
     spi_set_drvdata(spi, dev);
 
     ret = request_irq(spi->irq, si446x_irq, 0, DRV_NAME, dev);

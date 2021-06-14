@@ -25,6 +25,8 @@
                 interrupts = <17 0x2>; // falling edge
                 spi-max-frequency = <4000000>;
                 sdn_pin = <27>;
+                irq_pin = <17>;
+                spi-cs-high;
                 status = "okay";
             };
         };
