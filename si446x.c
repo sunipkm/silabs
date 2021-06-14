@@ -76,7 +76,8 @@ static DECLARE_WAIT_QUEUE_HEAD(rxq);
 
 static inline int interrupt_off(struct si446x *dev)
 {
-    mutex_lock(&(dev->isr_lock)); // prevent ISR from running
+    if (!(dev->isr_state))
+        mutex_lock(&(dev->isr_lock)); // prevent ISR from running
     dev->isr_state++;
     return 1;
 }
