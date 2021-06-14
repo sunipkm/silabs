@@ -393,7 +393,7 @@ void si446x_get_info(struct si446x *dev, si446x_info_t *info)
 {
     u8 out[1];
     u8 data[8];
-
+    memset(data, 0x0, sizeof(data));
     out[0] = SI446X_CMD_PART_INFO;
     si446x_do_api(dev, out, 1, data, 8);
 
@@ -1347,7 +1347,7 @@ static int si446x_probe(struct spi_device *spi)
         printk(KERN_ERR DRV_NAME ": Error requesting IRQ, return %d\n", ret);
         goto err_init_serial;
     }
-
+    dev->init_ctr = 0; // init counter 0
     return 0;
 err_init_serial:
     kfree(dev->rxbuf->buf);
