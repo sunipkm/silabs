@@ -153,9 +153,7 @@ static unsigned char get_response(struct si446x *dev, void *buff, unsigned char 
     dout[0] = SI446X_CMD_READ_CMD_BUFF;
 
     mutex_lock(&(dev->lock));
-    spi_bus_lock(spi->controller);
     ret = spi_sync_transfer(spi, xfer, 1);
-    spi_bus_unlock(spi->controller);
     mutex_unlock(&(dev->lock));
     printk(KERN_INFO DRV_NAME ": %s transferred\n", __func__);
     if (ret != 0)
@@ -163,6 +161,7 @@ static unsigned char get_response(struct si446x *dev, void *buff, unsigned char 
         printk(KERN_ERR DRV_NAME
                "Error in spi transaction get_response, retcode %d\n",
                ret);
+        cts = 0xff; // hack
         goto cleanup;
     }
     // printk(KERN_INFO DRV_NAME ": %s\n", __func__);
