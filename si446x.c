@@ -135,31 +135,24 @@ void __attribute__((weak, alias("__empty_callback0"))) SI446X_CB_LOWBATT(void);
 static unsigned char get_response(struct si446x *dev, void *buff, unsigned char len)
 {
     u8 cts;
+    int ret;
+    struct spi_transfer xfer[1];
+    struct spi_device *spi;
     // u8 i;
     u8 *dout = (u8 *)kmalloc(len + 2, GFP_NOWAIT); // 1 for cmd, 1 for cts
     u8 *din = (u8 *)kzalloc(len + 2, GFP_NOWAIT);  // no need to memset input
     cts = 0;
-    struct spi_transfer tx = {
-        .tx_buf = dout,
-        .len = len + 2,
-    };
-    struct spi_transfer rx = {
-        .rx_buf = din,
-        .len = len + 2,
-    };
-    struct spi_message msg;
-    int ret;
-    struct spi_device *spi = dev->spibus;
+    xfer->tx_buf = dout;
+    xfer->rx_buf = din;
+    xfer->len = len + 2;
+    spi = dev->spibus;
+
     // set command
     dout[0] = SI446X_CMD_READ_CMD_BUFF;
     memset(dout + 1, 0xff, len + 1);
 
-    spi_message_init(&msg);
-    spi_message_add_tail(&tx, &msg);
-    spi_message_add_tail(&rx, &msg);
-
     mutex_lock(&(dev->lock));
-    ret = spi_sync(spi, &msg); // blocking
+    ret = spi_sync_transfer(spi, xfer, 1);
     mutex_unlock(&(dev->lock));
     if (ret != 0)
     {
@@ -206,23 +199,14 @@ static void spi_write_buf(struct si446x *dev, void *out, u8 len)
     struct spi_device *spi;
     int ret;
     u8 i;
+    struct spi_transfer tx[1];
     spi = dev->spibus;
-    struct spi_transfer tx = {
-        .tx_buf = out,
-        .len = len,
-    };
-    struct spi_transfer rx = {
-        .rx_buf = NULL,
-        .len = 0,
-    };
-    struct spi_message msg;
-
-    spi_message_init(&msg);
-    spi_message_add_tail(&tx, &msg);
-    spi_message_add_tail(&rx, &msg);
+    tx->tx_buf = out;
+    tx->rx_buf = NULL;
+    tx->len = len;
 
     mutex_lock(&(dev->lock));
-    ret = spi_sync(spi, &msg);
+    ret = spi_sync_transfer(spi, tx, 1);
     mutex_unlock(&(dev->lock));
     printk(KERN_INFO DRV_NAME ": %s\n", __func__);
     for (i = 0; i < len; i++)
@@ -352,15 +336,10 @@ static u8 get_frr(struct si446x *dev, u8 reg)
         int ret;
         u8 i;
         u8 dout[2], din[2];
-        struct spi_transfer tx = {
-            .tx_buf = dout,
-            .len = 2,
-        };
-        struct spi_transfer rx = {
-            .rx_buf = din,
-            .len = 2,
-        };
-        struct spi_message msg;
+        struct spi_transfer xfer[1];
+        xfer->tx_buf = dout;
+        xfer->rx_buf = din;
+        xfer->len = 2;
 
         dout[0] = reg;
         dout[1] = 0xff;
@@ -368,12 +347,8 @@ static u8 get_frr(struct si446x *dev, u8 reg)
         din[1] = 0;
         spi = dev->spibus;
 
-        spi_message_init(&msg);
-        spi_message_add_tail(&tx, &msg);
-        spi_message_add_tail(&rx, &msg);
-
         mutex_lock(&(dev->lock));
-        ret = spi_sync(spi, &msg);
+        ret = spi_sync_transfer(spi, xfer, 1);
         mutex_unlock(&(dev->lock));
         printk(KERN_INFO DRV_NAME ": %s\n", __func__);
         for (i = 0; i < 2; i++)
@@ -692,24 +667,17 @@ static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
     u8 i;
     u8 *din = (uint8_t *)kmalloc(len + 1, GFP_NOWAIT);
     u8 *dout = (uint8_t *)kmalloc(len + 1, GFP_NOWAIT);
-    struct spi_transfer tx = {
-        .tx_buf = dout,
-        .len = len + 1,
-    };
-    struct spi_transfer rx = {
-        .rx_buf = din,
-        .len = len + 1,
-    };
-    struct spi_message msg;
+    struct spi_transfer xfer[1];
+    xfer->tx_buf = dout;
+    xfer->rx_buf = din;
+    xfer->len = len + 1;
+
     memset(dout, 0xff, len + 1);
     dout[0] = SI446X_CMD_READ_RX_FIFO;
     spi = dev->spibus;
 
-    spi_message_init(&msg);
-    spi_message_add_tail(&tx, &msg);
-    spi_message_add_tail(&rx, &msg);
     mutex_lock(&(dev->lock));
-    ret = spi_sync(spi, &msg); // assuming negative on error, zero on success
+    ret = spi_sync_transfer(spi, xfer, 1); // assuming negative on error, zero on success
     mutex_unlock(&(dev->lock));
     printk(KERN_INFO DRV_NAME ": %s\n", __func__);
     for (i = 0; i < len + 1; i++)
@@ -729,28 +697,26 @@ static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
     u8 *dout;
     int ret;
     u8 i;
-    struct spi_message msg;
     struct spi_device *spi;
+    struct spi_transfer xfer[1];
+
     dout = (u8 *)kmalloc(len + 2, GFP_NOWAIT);
-    struct spi_transfer tx = {
-        .tx_buf = dout,
-        .len = len + 2,
-    };
-    struct spi_transfer rx = {
-        .rx_buf = NULL,
-        .len = 0,
-    };
+    xfer->tx_buf = dout;
+    xfer->rx_buf = NULL;
+    xfer->len = len + 2;
+
     memset(dout, 0xff, len + 1);
     dout[0] = SI446X_CMD_WRITE_TX_FIFO;
     dout[1] = len;
+
     memcpy(dout + 2, buf, len);
-    spi_message_init(&msg);
-    spi_message_add_tail(&tx, &msg);
-    spi_message_add_tail(&rx, &msg);
+
     spi = dev->spibus;
+
     mutex_lock(&(dev->lock));
-    ret = spi_sync(spi, &msg); // assuming negative on error, zero on success
+    ret = spi_sync_transfer(spi, xfer, 1); // assuming negative on error, zero on success
     mutex_unlock(&(dev->lock));
+
     printk(KERN_INFO DRV_NAME ": %s\n", __func__);
     for (i = 0; i < len + 2; i++)
         printk(KERN_INFO DRV_NAME ": %u -> Out: %u\n", i, dout[i]);
@@ -764,6 +730,7 @@ static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
 static int si446x_tx(struct si446x *dev, void *packet, u8 len, u8 channel, si446x_state_t onTxFinish)
 {
     int retcode;
+    u8 data[7];
     if (len == 0)
     {
         retcode = 0;
@@ -785,14 +752,14 @@ static int si446x_tx(struct si446x *dev, void *packet, u8 len, u8 channel, si446
     si446x_internal_write(dev, packet, len);
 
     // Begin transmit
-    u8 data[] = {
-        SI446X_CMD_START_TX,
-        channel,
-        (u8)(onTxFinish << 4),
-        0,
-        len,
-        0,
-        0};
+    data[0] = SI446X_CMD_START_TX;
+    data[1] = channel;
+    data[2] = (u8)(onTxFinish << 4);
+    data[3] = 0;
+    data[4] = len;
+    data[5] = 0;
+    data[6] = 0;
+
     si446x_do_api(dev, data, sizeof(data), NULL, 0);
     retcode = len;
 cleanup:
@@ -1191,6 +1158,8 @@ static int si446x_probe(struct spi_device *spi)
     struct device *pdev;
     int sdn_pin, nirq_pin;
     int ret;
+    int ma, mi;
+    dev_t this_dev;
     ret = 0;
 
     if (!spi)
@@ -1303,8 +1272,6 @@ static int si446x_probe(struct spi_device *spi)
     if (!ret)
     {
         printk(KERN_INFO DRV_NAME ": chardev allocating\n");
-        int ma, mi;
-        dev_t this_dev;
         ma = MAJOR(device_num);
         mi = MINOR(device_num);
         printk(KERN_INFO DRV_NAME ": major %d minor %d\n", ma, mi);
