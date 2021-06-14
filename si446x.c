@@ -915,7 +915,8 @@ static void si446x_irq_work_handler(struct work_struct *work)
 static irqreturn_t si446x_irq(int irq, void *dev_id)
 {
     struct si446x *dev = dev_id;
-    schedule_work(&(dev->irq_work));
+    if (dev->init_ctr)
+        schedule_work(&(dev->irq_work));
     return IRQ_HANDLED;
 }
 
