@@ -2,7 +2,7 @@
  * @file si446x_kern.h
  * @author Sunip K. Mukherjee (sunipkmukherjee@gmail.com)
  * @brief 
- * @version 0.1
+ * @version 1.0a
  * @date 2021-06-13
  * 
  * @copyright Copyright (c) 2021

@@ -2,7 +2,7 @@
  * @file si446x.c
  * @author Sunip K. Mukherjee (sunipkmukherjee@gmail.com)
  * @brief 
- * @version 0.1
+ * @version 1.0a
  * @date 2021-06-13
  * 
  * @copyright Copyright (c) 2021
@@ -36,7 +36,7 @@
 #include "si446x.h"
 
 #define DRV_NAME "si446x"
-#define DRV_VERSION "0.1"
+#define DRV_VERSION "1.0a"
 #define DEVICE_NAME "ttyUHF"
 
 #define MAX_DEV 5

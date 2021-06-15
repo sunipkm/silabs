@@ -2,7 +2,7 @@
  * @file si446x.h
  * @author Sunip K. Mukherjee (sunipkmukherjee@gmail.com)
  * @brief 
- * @version 0.1
+ * @version 1.0a
  * @date 2021-06-13
  * 
  * @copyright Copyright (c) 2021
@@ -93,8 +93,8 @@ enum SI446X_IOCTL
     SI446X_ADC_GPIO,         // struct SI446X_ADC_GPIO_MEM
     SI446X_SLEEP,            // void
     SI446X_ADC_CONF,         // struct SI446X_ADC_CONFIG
-    SI446X_RD_RX_BUF_SZ,      // int
-    SI446X_INIT         // NULL for default config, or pointer to struct SI446X_INIT_PROPS
+    SI446X_RD_RX_BUF_SZ,     // int
+    SI446X_INIT              // NULL for default config, or pointer to struct SI446X_INIT_PROPS
 };
 
 struct SI446X_WUT_CONFIG
@@ -127,9 +127,13 @@ struct SI446X_ADC_CONFIG
 
 struct SI446X_INIT_PROPS
 {
-    u32 len;
-    void *config;
+    u32 len;      // length of config array
+    void *config; // pointer to config array
 };
 
+/**
+ * @brief Convert result of SI446X_GET_TEMP from int to float temperature in Celcius
+ * 
+ */
 #define SI446X_CONVERT_TEMP(x) ((899.0 / 4096.0) * x - 293)
 #endif // _SI446X_H
