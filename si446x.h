@@ -14,6 +14,7 @@
 #include <stdint.h>
 typedef uint8_t u8;
 typedef uint16_t u16;
+typedef uint32_t u32;
 #else
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -126,7 +127,7 @@ struct SI446X_ADC_CONFIG
 
 struct SI446X_INIT_PROPS
 {
-    int len;
+    u32 len;
     void *config;
 };
 

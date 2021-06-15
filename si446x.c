@@ -39,10 +39,10 @@
 #define DRV_VERSION "0.1"
 #define DEVICE_NAME "ttyUHF"
 
-#define MAX_DEV 1
+#define MAX_DEV 5
 
-static dev_t device_num = 0;
-static dev_t major_num = 0;
+static dev_t device_num = 0; // major number
+static dev_t minor_ct = 0;   // minor count
 
 static struct class *si446x_class;
 
@@ -1302,6 +1302,12 @@ static int si446x_probe(struct spi_device *spi)
     dev_t this_dev;
     ret = 0;
 
+    if (minor_ct >= MAX_DEV)
+    {
+        printk(KERN_ERR DRV_NAME ": Could not allocate more than %d devices. %u devices allocated\n", MAX_DEV, minor_ct);
+        return -ENOMEM;
+    }
+
     if (!spi)
     {
         printk(KERN_ERR DRV_NAME ": spi is NULL, FATAL ERROR\n");
@@ -1381,7 +1387,7 @@ static int si446x_probe(struct spi_device *spi)
 
     dev->sdn_pin = sdn_pin;
     dev->nirq_pin = nirq_pin;
-    if (!major_num) // only for the first probe create class
+    if (!minor_ct) // only for the first probe create class
         si446x_class = class_create(THIS_MODULE, DRV_NAME "_class");
     if (!si446x_class)
     {
@@ -1407,13 +1413,15 @@ static int si446x_probe(struct spi_device *spi)
         goto err_alloc_buf;
     }
     printk(KERN_INFO DRV_NAME ": buff mem allocated\n");
-    ret = alloc_chrdev_region(&device_num, 0, MAX_DEV, DEVICE_NAME);
+    ret = 0; // making sure ret = 0 at this point
+    if (!minor_ct)
+        ret = alloc_chrdev_region(&device_num, 0, MAX_DEV, DRV_NAME "_" DEVICE_NAME);
     printk(KERN_INFO DRV_NAME ": chardev region allocated\n");
-    if (!ret)
+    if ((!ret) || (minor_ct > 0))
     {
         printk(KERN_INFO DRV_NAME ": chardev allocating\n");
         ma = MAJOR(device_num);
-        mi = MINOR(device_num);
+        mi = minor_ct++;
         printk(KERN_INFO DRV_NAME ": major %d minor %d\n", ma, mi);
         this_dev = MKDEV(ma, mi);
         cdev_init(&(dev->serdev), &si446x_fops);
@@ -1423,17 +1431,22 @@ static int si446x_probe(struct spi_device *spi)
         if (ret)
         {
             printk(KERN_ERR DRV_NAME ": Error adding serial device interface for major %d minor %d\n", ma, mi);
+            minor_ct--;
             goto err_init_serial;
         }
         else
         {
             dev->this_dev = this_dev;
-            device_create(si446x_class, &(spi->dev), this_dev, dev, DEVICE_NAME "%d", major_num++);
+            if (device_create(si446x_class, &(spi->dev), this_dev, dev, DEVICE_NAME "%d", mi) == NULL)
+            {
+                printk(KERN_ERR DRV_NAME ": Error creating device fs handle " DEVICE_NAME "%d", mi);
+                cdev_del(&(dev->serdev));
+                minor_ct--;
+            }
         }
     }
     else
     {
-
         printk(KERN_INFO DRV_NAME ": chardev region not allocated\n");
         goto err_init_serial;
     }
@@ -1467,6 +1480,11 @@ err_main:
 err_alloc_main:
     gpio_free(sdn_pin);
     gpio_free(nirq_pin);
+    if (!minor_ct)
+    {
+        class_destroy(si446x_class); // destroy class when the last device is deleted
+        unregister_chrdev_region(device_num, MAX_DEV);
+    }
     return ret;
 }
 
@@ -1483,10 +1501,12 @@ static int si446x_remove(struct spi_device *spi)
         dev->enabledInterrupts[i] = 0;
     cdev_del(&(dev->serdev));
     device_destroy(si446x_class, dev->this_dev);
-    major_num--;
-    if (major_num == 0)
+    minor_ct--;
+    if (minor_ct == 0)
+    {
         class_destroy(si446x_class); // destroy class when the last device is deleted
-    unregister_chrdev_region(device_num, 1);
+        unregister_chrdev_region(device_num, MAX_DEV);
+    }
     gpio_free(dev->sdn_pin);
     gpio_free(dev->nirq_pin);
     free_irq(spi->irq, dev);
