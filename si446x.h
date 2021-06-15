@@ -18,13 +18,12 @@ typedef uint16_t u16;
 #include <linux/kernel.h>
 #include <linux/types.h>
 #endif
+
+#include "radio_config.h"
+
 #define SI446X_MAX_PACKET_LEN 128 ///< Maximum packet length
 
 #define SI446X_MAX_TX_POWER 127 ///< Maximum TX power (+20dBm/100mW)
-
-// Raspberry Pi pin assignments
-#define SI446X_SDN 13 ///! Shutdown pin
-#define SI446X_IRQ 11 ///! Receive interrupt
 
 /**
 * @brief Data structure for storing chip info from ::si446x_getInfo()
@@ -93,7 +92,8 @@ enum SI446X_IOCTL
     SI446X_ADC_GPIO,         // struct SI446X_ADC_GPIO_MEM
     SI446X_SLEEP,            // void
     SI446X_ADC_CONF,         // struct SI446X_ADC_CONFIG
-    SI446X_RD_RX_BUF_SZ      // int
+    SI446X_RD_RX_BUF_SZ,      // int
+    SI446X_INIT         // NULL for default config, or pointer to struct SI446X_INIT_PROPS
 };
 
 struct SI446X_WUT_CONFIG
@@ -122,6 +122,12 @@ struct SI446X_ADC_CONFIG
     unsigned char cfg;
     unsigned char part;
     unsigned short ret;
+};
+
+struct SI446X_INIT_PROPS
+{
+    int len;
+    void *config;
 };
 
 #define SI446X_CONVERT_TEMP(x) ((899.0 / 4096.0) * x - 293)

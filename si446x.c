@@ -28,11 +28,11 @@
 #include <linux/delay.h>
 #include <linux/circ_buf.h>
 #include <linux/platform_device.h>
+#include <linux/wait.h>
 
 #include "si446x_kern.h"
 #include "si446x_config.h"
 #include "si446x_defs.h"
-#include "radio_config.h"
 #include "si446x.h"
 
 #define DRV_NAME "si446x"
@@ -42,6 +42,7 @@
 #define MAX_DEV 1
 
 static dev_t device_num = 0;
+static dev_t major_num = 0;
 
 static struct class *si446x_class;
 
@@ -67,12 +68,12 @@ struct si446x
     struct circ_buf *rxbuf;       // RX data buffer
     int rxbuf_len;                // rx buffer length
     bool data_available;          // indicate RX
-    int init_ctr;                 // module use counter
+    int open_ctr;                 // module use counter
+    bool initd;                   // indicate initialization
     dev_t this_dev;               // this device
     struct completion initq;      // init queue
+    struct wait_queue_head rxq;   // RX queue
 };
-
-static DECLARE_WAIT_QUEUE_HEAD(rxq);
 
 static inline int interrupt_off(struct si446x *dev)
 {
@@ -196,17 +197,14 @@ static u8 wait_for_response(struct si446x *dev, void *out, u8 outLen,
 
 static void spi_write_buf(struct si446x *dev, void *out, u8 len)
 {
-    static int count = 0;
     struct spi_device *spi;
     int ret;
-    u8 i;
     struct spi_transfer tx = {
         .tx_buf = out,
         .rx_buf = NULL,
         .len = len,
         // .cs_change = 0,
-        .bits_per_word = 8
-    };
+        .bits_per_word = 8};
     spi = dev->spibus;
 
     mutex_lock(&(dev->lock));
@@ -336,7 +334,6 @@ static u8 get_frr(struct si446x *dev, u8 reg)
     {
         struct spi_device *spi;
         int ret;
-        u8 i;
         u8 dout[2], din[2];
         struct spi_transfer xfer = {
             .tx_buf = dout,
@@ -481,14 +478,11 @@ static void apply_startup_config(struct si446x *dev)
 {
     u8 buff[17];
     u16 i;
-    int counter = 0;
     for (i = 0; i < dev->config_len; i++)
     {
-        printk(KERN_INFO DRV_NAME ": %s starting loop %d\n", __func__, counter);
         memcpy(buff, &(dev->config[i]), sizeof(buff));
         si446x_do_api(dev, &buff[1], buff[0], NULL, 0);
         i += buff[0];
-        printk(KERN_INFO DRV_NAME ": %s finished loop %d, wrote %u bytes total %u bytes\n", __func__, counter++, buff[0], i);
     }
 }
 
@@ -669,17 +663,16 @@ static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
 {
     struct spi_device *spi;
     int ret;
-    u8 i;
     u8 *din = (uint8_t *)kmalloc(len + 1, GFP_NOWAIT);
     u8 *dout = (uint8_t *)kmalloc(len + 1, GFP_NOWAIT);
-    struct spi_transfer xfer = 
-    {
-        .tx_buf = dout,
-        .rx_buf = din,
-        .len = len + 1,
-        .bits_per_word = 8,
-        // .cs_change = 0
-    };
+    struct spi_transfer xfer =
+        {
+            .tx_buf = dout,
+            .rx_buf = din,
+            .len = len + 1,
+            .bits_per_word = 8,
+            // .cs_change = 0
+        };
 
     memset(dout, 0xff, len + 1);
     dout[0] = SI446X_CMD_READ_RX_FIFO;
@@ -702,18 +695,15 @@ static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
 {
     u8 *dout = (u8 *)kmalloc(len + 2, GFP_NOWAIT);
     int ret;
-    u8 i;
     struct spi_device *spi;
-    
-    
-    struct spi_transfer xfer = 
-    {
-        .tx_buf = dout,
-        .len = len + 2,
-        .bits_per_word = 8,
-        // .cs_change = 0
-    };
 
+    struct spi_transfer xfer =
+        {
+            .tx_buf = dout,
+            .len = len + 2,
+            .bits_per_word = 8,
+            // .cs_change = 0
+        };
 
     memset(dout, 0xff, len + 1);
     dout[0] = SI446X_CMD_WRITE_TX_FIFO;
@@ -785,14 +775,9 @@ static void si446x_init_work_handler(struct work_struct *work)
     dev->isr_state = 0;
     reset_device(dev);
     printk(KERN_INFO DRV_NAME ": Device reset\n");
-    u8 conf[] = RADIO_CONFIGURATION_DATA_ARRAY;
-    dev->config_len = sizeof(conf);
-    dev->config = kmalloc(dev->config_len, GFP_NOWAIT);
-    memcpy(dev->config, conf, dev->config_len);
     printk(KERN_INFO DRV_NAME ": Applying startup config\n");
     apply_startup_config(dev);
     printk(KERN_INFO DRV_NAME ": Applied startup config\n");
-    kfree(dev->config);
     interrupt(dev, NULL);
     printk(KERN_INFO DRV_NAME ": Cleared IRQ vector\n");
     si446x_sleep(dev);
@@ -869,7 +854,7 @@ static void si446x_irq_work_handler(struct work_struct *work)
                 memcpy(dev->rxbuf->buf, buff + seq_len, remainder);
                 WRITE_ONCE(dev->rxbuf->head, (head + len) & (dev->rxbuf_len - 1));
                 dev->data_available = true;
-                wake_up_interruptible(&rxq);
+                wake_up_interruptible(&(dev->rxq));
             }
             else
             {
@@ -886,7 +871,7 @@ static void si446x_irq_work_handler(struct work_struct *work)
 static irqreturn_t si446x_irq(int irq, void *dev_id)
 {
     struct si446x *dev = dev_id;
-    if (dev->init_ctr)
+    if (dev->open_ctr)
         schedule_work(&(dev->irq_work));
     return IRQ_HANDLED;
 }
@@ -896,9 +881,11 @@ static ssize_t si446x_read(struct file *filp, char __user *buf, size_t count, lo
     struct si446x *dev;
     int head, tail, byte_count, out_count, remainder, seq_len;
     dev = (struct si446x *)(filp->private_data);
+    if (!dev->initd)
+        return -EINVAL;
     if (count == 0)
         return 0;
-    wait_event_interruptible(rxq, (dev->data_available == false)); // wait while byte count is zero
+    wait_event_interruptible(dev->rxq, (dev->data_available == false)); // wait while byte count is zero
     head = READ_ONCE(dev->rxbuf->head);
     tail = READ_ONCE(dev->rxbuf->tail);
     byte_count = CIRC_CNT(head, tail, dev->rxbuf_len);
@@ -932,6 +919,8 @@ static ssize_t si446x_write(struct file *filp, const char __user *buf, size_t co
     struct si446x *dev;
     ssize_t i, out_count, err_count;
     dev = (struct si446x *)(filp->private_data);
+    if (!dev->initd)
+        return -EINVAL;
     if (count == 0)
     {
         return 0;
@@ -962,14 +951,9 @@ static int si446x_open(struct inode *inod, struct file *filp)
     tcdev = inod->i_cdev;
     dev = container_of(tcdev, struct si446x, serdev);
     filp->private_data = (void *)dev; // this is what sets this for read/write() to work
-    // do stuff for init, like putting the device in receive mode
-    if (!(dev->init_ctr)) // device not initialized
-    {
-        init_completion(&(dev->initq));
-        schedule_work(&(dev->init_work));
-        wait_for_completion_interruptible(&(dev->initq));
-    }
-    dev->init_ctr++;
+    if (dev->open_ctr == 0)           // reset device on very first open
+        reset_device(dev);
+    dev->open_ctr++;
     try_module_get(THIS_MODULE); // increment use count
     return 0;
 }
@@ -982,7 +966,7 @@ static int si446x_release(struct inode *inod, struct file *filp)
     dev = container_of(tcdev, struct si446x, serdev);
     if (dev != filp->private_data)
         return -ESTALE;
-    if (!(dev->init_ctr))
+    if (!(dev->open_ctr)) // reset device on very last close
     {
         dev->data_available = false;
         dev->rxbuf->head = 0;
@@ -994,7 +978,7 @@ static int si446x_release(struct inode *inod, struct file *filp)
         dev->isr_state = 0;
         mutex_unlock(&(dev->isr_lock)); // force unlock irq lock
     }
-    dev->init_ctr--;
+    dev->open_ctr--;
     module_put(THIS_MODULE); // decrement module count
     return 0;
 }
@@ -1011,14 +995,25 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     case SI446X_SET_STATE:
     {
         int st;
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         retval = -copy_from_user_nofault(&st, ptr, sizeof(int));
-        set_state(dev, st);
+        if (!retval)
+            set_state(dev, st);
         printk(KERN_INFO DRV_NAME "ioctl set state %d\n", st);
         break;
     }
     case SI446X_GET_STATE:
     {
         int st;
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         st = get_state(dev);
         retval = -copy_to_user_nofault(ptr, &st, sizeof(int));
         printk(KERN_INFO DRV_NAME "ioctl get state %d\n", st);
@@ -1026,12 +1021,22 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     }
     case SI446X_GET_LATCHED_RSSI:
     {
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         retval = -copy_to_user_nofault(ptr, &(dev->rssi), sizeof(s16));
         break;
     }
     case SI446X_GET_RSSI:
     {
         s16 rssi;
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         rssi = get_rssi(dev);
         retval = -copy_to_user_nofault(ptr, &rssi, sizeof(s16));
         break;
@@ -1039,12 +1044,22 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     case SI446X_GET_INFO:
     {
         si446x_info_t info[1];
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         si446x_get_info(dev, info);
         retval = -copy_to_user_nofault(ptr, info, sizeof(si446x_info_t));
         break;
     }
     case SI446X_DISABLE_WUT:
     {
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         si446x_disable_wut(dev);
         retval = 1;
         break;
@@ -1052,6 +1067,11 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     case SI446X_SETUP_WUT:
     {
         struct SI446X_WUT_CONFIG conf[1];
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         retval = -copy_from_user_nofault(conf, ptr, sizeof(struct SI446X_WUT_CONFIG));
         if (!retval)
             si446x_setup_wut(dev, conf->r, conf->m, conf->ldc, conf->config);
@@ -1060,6 +1080,11 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     case SI446X_GET_TX_PWR:
     {
         u8 pwr;
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         pwr = si446x_get_tx_power(dev);
         retval = -copy_to_user_nofault(ptr, &pwr, sizeof(u8));
         break;
@@ -1067,6 +1092,11 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     case SI446X_SET_TX_PWR:
     {
         u8 pwr;
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         retval = -copy_from_user_nofault(&pwr, ptr, sizeof(u8));
         si446x_set_tx_power(dev, pwr);
         break;
@@ -1081,6 +1111,11 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     case SI446X_RD_GPIO:
     {
         u8 st;
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         st = si446x_read_gpio(dev);
         retval = -copy_to_user_nofault(ptr, &st, sizeof(s8));
         break;
@@ -1088,6 +1123,11 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     case SI446X_WR_GPIO:
     {
         struct SI446X_GPIO_CONFIG conf[1];
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         retval = -copy_from_user_nofault(conf, ptr, sizeof(struct SI446X_GPIO_CONFIG));
         si446x_write_gpio(dev, conf->pin, conf->val);
         break;
@@ -1095,6 +1135,11 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     case SI446X_SET_LOW_BATT:
     {
         u16 volt;
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         retval = -copy_from_user_nofault(&volt, ptr, sizeof(u16));
         si446x_set_low_batt(dev, volt);
         break;
@@ -1102,6 +1147,11 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     case SI446X_ADC_BATT:
     {
         u16 batt;
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         batt = si446x_adc_battery(dev);
         retval = -copy_to_user_nofault(ptr, &batt, sizeof(u16));
         break;
@@ -1109,6 +1159,11 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     case SI446X_ADC_GPIO:
     {
         struct SI446X_ADC_GPIO_MEM gp[1];
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         retval = -copy_from_user_nofault(gp, ptr, sizeof(struct SI446X_ADC_GPIO_MEM));
         if (retval)
         {
@@ -1120,6 +1175,11 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     }
     case SI446X_SLEEP:
     {
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         retval = si446x_sleep(dev);
         if (!retval)
         {
@@ -1130,6 +1190,11 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     case SI446X_ADC_CONF:
     {
         struct SI446X_ADC_CONFIG conf[1];
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         retval = -copy_from_user_nofault(conf, ptr, sizeof(struct SI446X_ADC_CONFIG));
         if (retval)
         {
@@ -1141,7 +1206,73 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     }
     case SI446X_RD_RX_BUF_SZ:
     {
+        if (!dev->initd)
+        {
+            retval = -EINVAL;
+            break;
+        }
         retval = -copy_to_user_nofault(ptr, &(dev->rxbuf_len), sizeof(int));
+        break;
+    }
+    case SI446X_INIT:
+    {
+        struct SI446X_INIT_PROPS init_props[1];
+        u8 config[] = RADIO_CONFIGURATION_DATA_ARRAY;
+        memset(init_props, 0x0, sizeof(struct SI446X_INIT_PROPS));
+        if (arg == 0)
+        {
+            printk(KERN_INFO DRV_NAME ": Using default config\n");
+            init_props->len = sizeof(config);
+            retval = 0;
+        }
+        else
+        {
+            retval = 0;
+            retval = copy_from_user(init_props, (void *__user)arg, sizeof(struct SI446X_INIT_PROPS));
+        }
+        if (!retval) // copy over length
+        {
+            dev->config_len = init_props->len;
+        }
+        else
+        {
+            retval = -EINVAL;
+            break; // failed
+        }
+        dev->config = (u8 *)kmalloc(dev->config_len, GFP_NOWAIT); // allocate memory for config buffer
+        if (dev->config == NULL)
+        {
+            printk(KERN_ERR DRV_NAME ": Error allocating memory for init configuration\n");
+            retval = -ENOMEM;
+            break;
+        }
+        if (arg)
+        {
+            retval = copy_from_user(dev->config, (void *__user)init_props->config, dev->config_len);
+        }
+        else
+        {
+            memcpy(dev->config, config, dev->config_len);
+        }
+        if (retval)
+        {
+            retval = -ENOMEM;
+            break;
+        }
+        // now we have config, we can go with init
+        init_completion(&(dev->initq));
+        schedule_work(&(dev->init_work));
+        if (!wait_for_completion_interruptible(&(dev->initq)))
+        {
+            dev->initd = true;
+            retval = 0;
+        }
+        else
+        {
+            dev->initd = false;
+            retval = -ETIMEDOUT;
+        }
+        kfree(dev->config);
         break;
     }
     default:
@@ -1250,8 +1381,8 @@ static int si446x_probe(struct spi_device *spi)
 
     dev->sdn_pin = sdn_pin;
     dev->nirq_pin = nirq_pin;
-
-    si446x_class = class_create(THIS_MODULE, DRV_NAME "_class");
+    if (!major_num) // only for the first probe create class
+        si446x_class = class_create(THIS_MODULE, DRV_NAME "_class");
     if (!si446x_class)
     {
         ret = -ENOMEM;
@@ -1297,7 +1428,7 @@ static int si446x_probe(struct spi_device *spi)
         else
         {
             dev->this_dev = this_dev;
-            device_create(si446x_class, &(spi->dev), this_dev, dev, DEVICE_NAME "%d", mi);
+            device_create(si446x_class, &(spi->dev), this_dev, dev, DEVICE_NAME "%d", major_num++);
         }
     }
     else
@@ -1309,6 +1440,7 @@ static int si446x_probe(struct spi_device *spi)
 
     mutex_init(&(dev->lock));
     mutex_init(&(dev->isr_lock));
+    init_waitqueue_head(&(dev->rxq));
     dev->isr_state = 0;
     dev->enabledInterrupts[0] = 0;
     dev->enabledInterrupts[1] = 0;
@@ -1323,7 +1455,8 @@ static int si446x_probe(struct spi_device *spi)
         printk(KERN_ERR DRV_NAME ": Error requesting IRQ, return %d\n", ret);
         goto err_init_serial;
     }
-    dev->init_ctr = 0; // init counter 0
+    dev->open_ctr = 0; // init counter 0
+    dev->initd = false;
     return 0;
 err_init_serial:
     kfree(dev->rxbuf->buf);
@@ -1350,7 +1483,9 @@ static int si446x_remove(struct spi_device *spi)
         dev->enabledInterrupts[i] = 0;
     cdev_del(&(dev->serdev));
     device_destroy(si446x_class, dev->this_dev);
-    class_destroy(si446x_class);
+    major_num--;
+    if (major_num == 0)
+        class_destroy(si446x_class); // destroy class when the last device is deleted
     unregister_chrdev_region(device_num, 1);
     gpio_free(dev->sdn_pin);
     gpio_free(dev->nirq_pin);
