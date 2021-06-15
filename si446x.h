@@ -91,7 +91,7 @@ enum SI446X_IOCTL
     SI446X_SET_LOW_BATT,     // uint16_t voltage
     SI446X_ADC_BATT,         // uint16_t voltage
     SI446X_ADC_GPIO,         // struct SI446X_ADC_GPIO_MEM
-    SI446X_SLEEP,            // void
+    SI446X_SLEEP,            // void, returns 0 on failure, 1 on success
     SI446X_ADC_CONF,         // struct SI446X_ADC_CONFIG
     SI446X_RD_RX_BUF_SZ,     // int
     SI446X_INIT              // NULL for default config, or pointer to struct SI446X_INIT_PROPS

@@ -118,7 +118,7 @@ static void __empty_callback1(s16 param1)
 
 void SI446X_CB_CMDTIMEOUT(void)
 {
-    printk(KERN_ERR DRV_NAME ": wait_for_response timed out\n");
+    printk(KERN_INFO DRV_NAME ": wait_for_response timed out\n");
 }
 void __attribute__((weak, alias("__empty_callback1")))
 SI446X_CB_RXBEGIN(s16 rssi);
@@ -774,19 +774,19 @@ static void si446x_init_work_handler(struct work_struct *work)
     dev->rxbuf->tail = 0;
     dev->isr_state = 0;
     reset_device(dev);
-    printk(KERN_INFO DRV_NAME ": Device reset\n");
-    printk(KERN_INFO DRV_NAME ": Applying startup config\n");
+    printk(KERN_DEBUG DRV_NAME ": Device reset\n");
+    printk(KERN_DEBUG DRV_NAME ": Applying startup config\n");
     apply_startup_config(dev);
-    printk(KERN_INFO DRV_NAME ": Applied startup config\n");
+    printk(KERN_DEBUG DRV_NAME ": Applied startup config\n");
     interrupt(dev, NULL);
-    printk(KERN_INFO DRV_NAME ": Cleared IRQ vector\n");
+    printk(KERN_DEBUG DRV_NAME ": Cleared IRQ vector\n");
     si446x_sleep(dev);
-    printk(KERN_INFO DRV_NAME ": Device in sleep mode\n");
+    printk(KERN_DEBUG DRV_NAME ": Device in sleep mode\n");
     dev->enabledInterrupts[IRQ_PACKET] = (1 << SI446X_PACKET_RX_PEND) | (1 << SI446X_CRC_ERROR_PEND);
     si446x_setup_callback(dev, SI446X_CBS_RXBEGIN, 1); // enable receive irq
-    printk(KERN_INFO DRV_NAME ": Receive callback set\n");
+    printk(KERN_DEBUG DRV_NAME ": Receive callback set\n");
     complete(&(dev->initq));
-    printk(KERN_INFO DRV_NAME ": Signalled end of init\n");
+    printk(KERN_DEBUG DRV_NAME ": Signalled end of init\n");
 }
 
 static void si446x_irq_work_handler(struct work_struct *work)
@@ -860,7 +860,6 @@ static void si446x_irq_work_handler(struct work_struct *work)
             {
                 printk(KERN_ERR DRV_NAME "Error writing data, RX buffer full");
             }
-            // TODO: wake up read
             read_rx_fifo = false;
             len = 0;
         }
@@ -1003,7 +1002,7 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         retval = -copy_from_user_nofault(&st, ptr, sizeof(int));
         if (!retval)
             set_state(dev, st);
-        printk(KERN_INFO DRV_NAME "ioctl set state %d\n", st);
+        printk(KERN_DEBUG DRV_NAME "ioctl set state %d\n", st);
         break;
     }
     case SI446X_GET_STATE:
@@ -1016,7 +1015,7 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         }
         st = get_state(dev);
         retval = -copy_to_user_nofault(ptr, &st, sizeof(int));
-        printk(KERN_INFO DRV_NAME "ioctl get state %d\n", st);
+        printk(KERN_DEBUG DRV_NAME "ioctl get state %d\n", st);
         break;
     }
     case SI446X_GET_LATCHED_RSSI:
@@ -1183,7 +1182,7 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         retval = si446x_sleep(dev);
         if (!retval)
         {
-            printk(KERN_INFO DRV_NAME "Can not sleep, TX going\n");
+            printk(KERN_DEBUG DRV_NAME "Can not sleep, TX going\n");
         }
         break;
     }
@@ -1316,11 +1315,7 @@ static int si446x_probe(struct spi_device *spi)
 
     spi->mode = SPI_MODE_0;
 
-    printk(KERN_INFO DRV_NAME ": driver is loaded\n");
-
     dev = kmalloc(sizeof(struct si446x), GFP_KERNEL);
-
-    printk(KERN_INFO DRV_NAME ": driver mem allocated\n");
 
     if ((!dev))
     {
@@ -1330,12 +1325,10 @@ static int si446x_probe(struct spi_device *spi)
     }
 
     pdev = &(spi->dev);
-    printk(KERN_INFO DRV_NAME ": platform device %p\n", pdev);
 
     dev->spibus = spi;
 
     spi_set_drvdata(spi, dev);
-    printk(KERN_INFO DRV_NAME ": spi drvdata set, %p = %p\n", spi, spi_get_drvdata(spi));
 
     if (of_property_read_s32(pdev->of_node, "sdn_pin", &(sdn_pin)))
     {
@@ -1350,7 +1343,6 @@ static int si446x_probe(struct spi_device *spi)
         ret = -ENODATA;
         goto err_main;
     }
-    printk(KERN_INFO DRV_NAME ": SDN pin: %d\n", sdn_pin);
     ret = gpio_request(sdn_pin, DRV_NAME "_gpio_sdn");
     if (ret)
     {
@@ -1412,22 +1404,16 @@ static int si446x_probe(struct spi_device *spi)
         printk(KERN_ERR DRV_NAME ": Error allocating memory for receiver buffer\n");
         goto err_alloc_buf;
     }
-    printk(KERN_INFO DRV_NAME ": buff mem allocated\n");
     ret = 0; // making sure ret = 0 at this point
     if (!minor_ct)
         ret = alloc_chrdev_region(&device_num, 0, MAX_DEV, DRV_NAME "_" DEVICE_NAME);
-    printk(KERN_INFO DRV_NAME ": chardev region allocated\n");
     if ((!ret) || (minor_ct > 0))
     {
-        printk(KERN_INFO DRV_NAME ": chardev allocating\n");
         ma = MAJOR(device_num);
         mi = minor_ct++;
-        printk(KERN_INFO DRV_NAME ": major %d minor %d\n", ma, mi);
         this_dev = MKDEV(ma, mi);
         cdev_init(&(dev->serdev), &si446x_fops);
-        printk(KERN_INFO DRV_NAME ": cdev init\n");
         ret = cdev_add(&(dev->serdev), this_dev, 1);
-        printk(KERN_INFO DRV_NAME ": cdev add\n");
         if (ret)
         {
             printk(KERN_ERR DRV_NAME ": Error adding serial device interface for major %d minor %d\n", ma, mi);
@@ -1447,7 +1433,7 @@ static int si446x_probe(struct spi_device *spi)
     }
     else
     {
-        printk(KERN_INFO DRV_NAME ": chardev region not allocated\n");
+        printk(KERN_ERR DRV_NAME ": chardev region not allocated\n");
         goto err_init_serial;
     }
 
@@ -1470,6 +1456,7 @@ static int si446x_probe(struct spi_device *spi)
     }
     dev->open_ctr = 0; // init counter 0
     dev->initd = false;
+    printk(KERN_INFO DRV_NAME ": Registered device at spi%d.%d, with SDN %d and IRQ %d at " DEVICE_NAME "%d\n", spi->controller->bus_num, spi->chip_select, dev->sdn_pin, dev->nirq_pin, mi);
     return 0;
 err_init_serial:
     kfree(dev->rxbuf->buf);
@@ -1485,6 +1472,7 @@ err_alloc_main:
         class_destroy(si446x_class); // destroy class when the last device is deleted
         unregister_chrdev_region(device_num, MAX_DEV);
     }
+    printk(KERN_INFO DRV_NAME ": Failed to register device at spi%d.%d, with SDN %d and IRQ %d\n", spi->controller->bus_num, spi->chip_select, dev->sdn_pin, dev->nirq_pin);
     return ret;
 }
 
