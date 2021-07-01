@@ -40,7 +40,14 @@
 #define DRV_VERSION "1.0a"
 #define DEVICE_NAME "ttyUHF"
 
-#define MAX_DEV 5
+#ifndef SI446X_MAX_DEVICES
+#define SI446X_MAX_DEVICES 5
+#endif
+
+#if SI446X_MAX_DEVICES <= 0
+#undef SI446X_MAX_DEVICES
+#define SI446X_MAX_DEVICES 1
+#endif
 
 #define SI446X_CB_DEBUG 0
 
@@ -125,7 +132,7 @@ static void __empty_callback1(s16 param1)
     (void)(param1);
 }
 
-#if SI446X_CB_DEBUG==0
+#if SI446X_CB_DEBUG == 0
 #define SI446X_CB_CMDTIMEOUT()
 #else
 void SI446X_CB_CMDTIMEOUT(void)
@@ -817,7 +824,10 @@ static void si446x_irq_work_handler(struct work_struct *work)
             dev->rssi = get_latched_rssi(dev);
             SI446X_CB_RXCOMPLETE(len, dev->rssi);
             if ((len != 0xff) && (len != 0))
+            {
                 read_rx_fifo = true;
+                dev->rx_pk_ctr++;
+            }
         }
         // corrupted packet
         if (interrupts[2] & (1 << SI446X_CRC_ERROR_PEND))
@@ -1377,6 +1387,21 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         kfree(dev->config);
         break;
     }
+    case SI446X_DEBUG_TX_PACKETS:
+    {
+        retval = dev->tx_pk_ctr;
+        break;
+    }
+    case SI446X_DEBUG_RX_PACKETS:
+    {
+        retval = dev->rx_pk_ctr;
+        break;
+    }
+    case SI446X_DEBUG_RX_CORRUPT_PACKETS:
+    {
+        retval = dev->rx_corrupt_ctr;
+        break;
+    }
     default:
         printk(KERN_ERR DRV_NAME "%d invalid ioctl command\n", cmd);
         retval = -ENOIOCTLCMD;
@@ -1405,9 +1430,9 @@ static int si446x_probe(struct spi_device *spi)
     dev_t this_dev;
     ret = 0;
 
-    if (minor_ct >= MAX_DEV)
+    if (minor_ct >= SI446X_MAX_DEVICES)
     {
-        printk(KERN_ERR DRV_NAME ": Could not allocate more than %d devices. %u devices allocated\n", MAX_DEV, minor_ct);
+        printk(KERN_ERR DRV_NAME ": Could not allocate more than %d devices. %u devices allocated\n", SI446X_MAX_DEVICES, minor_ct);
         return -ENOMEM;
     }
 
@@ -1510,7 +1535,7 @@ static int si446x_probe(struct spi_device *spi)
     }
     ret = 0; // making sure ret = 0 at this point
     if (!minor_ct)
-        ret = alloc_chrdev_region(&device_num, 0, MAX_DEV, DRV_NAME "_" DEVICE_NAME);
+        ret = alloc_chrdev_region(&device_num, 0, SI446X_MAX_DEVICES, DRV_NAME "_" DEVICE_NAME);
     if ((!ret) || (minor_ct > 0))
     {
         ma = MAJOR(device_num);
@@ -1524,15 +1549,13 @@ static int si446x_probe(struct spi_device *spi)
             minor_ct--;
             goto err_init_serial;
         }
-        else
+        // else
+        dev->this_dev = this_dev;
+        if (device_create(si446x_class, &(spi->dev), this_dev, dev, DEVICE_NAME "%d", mi) == NULL)
         {
-            dev->this_dev = this_dev;
-            if (device_create(si446x_class, &(spi->dev), this_dev, dev, DEVICE_NAME "%d", mi) == NULL)
-            {
-                printk(KERN_ERR DRV_NAME ": Error creating device fs handle " DEVICE_NAME "%d", mi);
-                cdev_del(&(dev->serdev));
-                minor_ct--;
-            }
+            printk(KERN_ERR DRV_NAME ": Error creating device fs handle " DEVICE_NAME "%d", mi);
+            cdev_del(&(dev->serdev));
+            minor_ct--;
         }
     }
     else
@@ -1575,7 +1598,7 @@ err_alloc_main:
     if (!minor_ct)
     {
         class_destroy(si446x_class); // destroy class when the last device is deleted
-        unregister_chrdev_region(device_num, MAX_DEV);
+        unregister_chrdev_region(device_num, SI446X_MAX_DEVICES);
     }
     printk(KERN_ERR DRV_NAME ": Failed to register device at spi%d.%d, with SDN %d and IRQ %d\n", spi->controller->bus_num, spi->chip_select, dev->sdn_pin, dev->nirq_pin);
     return ret;
@@ -1598,7 +1621,7 @@ static int si446x_remove(struct spi_device *spi)
     if (minor_ct == 0)
     {
         class_destroy(si446x_class); // destroy class when the last device is deleted
-        unregister_chrdev_region(device_num, MAX_DEV);
+        unregister_chrdev_region(device_num, SI446X_MAX_DEVICES);
     }
     gpio_free(dev->sdn_pin);
     gpio_free(dev->nirq_pin);
