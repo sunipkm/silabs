@@ -42,6 +42,8 @@
 
 #define MAX_DEV 5
 
+#define SI446X_CB_DEBUG 0
+
 static dev_t device_num = 0; // major number
 static dev_t minor_ct = 0;   // minor count
 
@@ -123,10 +125,15 @@ static void __empty_callback1(s16 param1)
     (void)(param1);
 }
 
+#if SI446X_CB_DEBUG==0
+#define SI446X_CB_CMDTIMEOUT()
+#else
 void SI446X_CB_CMDTIMEOUT(void)
 {
-    printk(KERN_INFO DRV_NAME ": wait_for_response timed out\n");
+    printk(KERN_DEBUG DRV_NAME ": wait_for_response timed out\n");
 }
+#endif
+
 void __attribute__((weak, alias("__empty_callback1")))
 SI446X_CB_RXBEGIN(s16 rssi);
 void __attribute__((weak)) SI446X_CB_RXCOMPLETE(u8 length, s16 rssi)
@@ -1019,17 +1026,17 @@ static int si446x_open(struct inode *inod, struct file *filp)
     retval = 0;
     if (open_ctr == 1) // reset device on very first open
     {
-        printk(KERN_INFO DRV_NAME ": First open\n");
+        printk(KERN_DEBUG DRV_NAME ": First open\n");
         dev->initd = false;
         reset_device(dev);
-        printk(KERN_INFO DRV_NAME ": Reset device\n");
+        printk(KERN_DEBUG DRV_NAME ": Reset device\n");
         si446x_get_info(dev, info);
-        printk(KERN_INFO DRV_NAME ": Get info in open\n");
+        printk(KERN_DEBUG DRV_NAME ": Get info in open\n");
         buf = (char *)info;
         val = 0x0;
         for (i = 0; i < sizeof(si446x_info_t); i++)
             val |= buf[i];
-        printk(KERN_INFO DRV_NAME ": Info -> 0x%x\n", val);
+        printk(KERN_DEBUG DRV_NAME ": Info -> 0x%x\n", val);
         if ((val & 0x7f) == 0x0)
         {
             printk(KERN_ERR DRV_NAME ": Device not responding on SPI\n");
@@ -1316,7 +1323,7 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         memset(init_props, 0x0, sizeof(struct SI446X_INIT_PROPS));
         if (arg == 0)
         {
-            printk(KERN_INFO DRV_NAME ": Using default config\n");
+            printk(KERN_DEBUG DRV_NAME ": Using default config\n");
             init_props->len = sizeof(config);
             retval = 0;
         }
@@ -1570,7 +1577,7 @@ err_alloc_main:
         class_destroy(si446x_class); // destroy class when the last device is deleted
         unregister_chrdev_region(device_num, MAX_DEV);
     }
-    printk(KERN_INFO DRV_NAME ": Failed to register device at spi%d.%d, with SDN %d and IRQ %d\n", spi->controller->bus_num, spi->chip_select, dev->sdn_pin, dev->nirq_pin);
+    printk(KERN_ERR DRV_NAME ": Failed to register device at spi%d.%d, with SDN %d and IRQ %d\n", spi->controller->bus_num, spi->chip_select, dev->sdn_pin, dev->nirq_pin);
     return ret;
 }
 
@@ -1598,6 +1605,7 @@ static int si446x_remove(struct spi_device *spi)
     free_irq(spi->irq, dev);
     kfree(dev->rxbuf);
     kfree(dev);
+    printk(KERN_INFO DRV_NAME ": Si446x device unregistered.\n");
     return 0;
 }
 
