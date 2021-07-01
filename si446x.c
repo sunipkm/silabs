@@ -1584,6 +1584,9 @@ static int si446x_probe(struct spi_device *spi)
     dev->open_ctr = 0;         // init counter 0
     dev->device_avail = false; // device not available by default
     dev->initd = false;        // device not initiated by default
+    dev->tx_pk_ctr = 0;        // initialize tx packet counter to zero
+    dev->rx_pk_ctr = 0;        // initialize rx packet counter to zero
+    dev->rx_corrupt_ctr = 0;   // initialize rx corrupt packet counter to zero
     printk(KERN_INFO DRV_NAME ": Registered device at spi%d.%d, with SDN %d and IRQ %d at " DEVICE_NAME "%d\n", spi->controller->bus_num, spi->chip_select, dev->sdn_pin, dev->nirq_pin, mi);
     return 0;
 err_init_serial:
