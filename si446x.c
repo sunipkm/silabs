@@ -1030,7 +1030,7 @@ static int si446x_open(struct inode *inod, struct file *filp)
         for (i = 0; i < sizeof(si446x_info_t); i++)
             val |= buf[i];
         printk(KERN_INFO DRV_NAME ": Info -> 0x%x\n", val);
-        if ((val & 0xff) == 0x0)
+        if ((val & 0x7f) == 0x0)
         {
             printk(KERN_ERR DRV_NAME ": Device not responding on SPI\n");
             retval = -EHOSTDOWN;          // signal that host is down
