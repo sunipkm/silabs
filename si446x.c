@@ -79,16 +79,21 @@ struct si446x
 
 static inline int interrupt_off(struct si446x *dev)
 {
-    if (READ_ONCE(dev->isr_state) == 0)
-        mutex_lock(&(dev->isr_lock)); // prevent ISR from running
-    WRITE_ONCE(dev->isr_state, READ_ONCE(dev->isr_state) + 1);
+    int isr_state;
+    isr_state = READ_ONCE(dev->isr_state);
+    if (isr_state == 0)
+        mutex_trylock(&(dev->isr_lock)); // prevent ISR from running
+    WRITE_ONCE(dev->isr_state, isr_state + 1);
     return 1;
 }
 
 static inline int interrupt_on(struct si446x *dev)
 {
+    int isr_state;
+    isr_state = READ_ONCE(dev->isr_state);
     if (READ_ONCE(dev->isr_state) > 0)
-        WRITE_ONCE(dev->isr_state, READ_ONCE(dev->isr_state) - 1);
+        WRITE_ONCE(dev->isr_state, isr_state - 1);
+    isr_state = READ_ONCE(dev->isr_state);
     if (READ_ONCE(dev->isr_state) == 0)
         mutex_unlock(&(dev->isr_lock)); // Allow ISR to run
     return 0;
