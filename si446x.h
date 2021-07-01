@@ -123,28 +123,32 @@ typedef enum
 
 enum SI446X_IOCTL
 {
-    SI446X_SET_STATE = 0xa,         // si446x_state_t state
-    SI446X_GET_STATE,               // si446x_state_t state
-    SI446X_GET_LATCHED_RSSI,        // int16_t rssi
-    SI446X_GET_RSSI,                // int16_t rssi
-    SI446X_GET_INFO,                // si446x_info_t info
-    SI446X_DISABLE_WUT,             // void
-    SI446X_SETUP_WUT,               // struct SI446X_WUT_CONFIG
-    SI446X_GET_TX_PWR,              // uint8_t tx power
-    SI446X_SET_TX_PWR,              // uint8_t tx_power
-    SI446X_GET_TEMP,                // int32_t get temperature
-    SI446X_RD_GPIO,                 // uint8_t gpio state
-    SI446X_WR_GPIO,                 // struct SI446X_GPIO_CONFIG
-    SI446X_SET_LOW_BATT,            // uint16_t voltage
-    SI446X_ADC_BATT,                // uint16_t voltage
-    SI446X_ADC_GPIO,                // struct SI446X_ADC_GPIO_MEM
-    SI446X_SLEEP,                   // void, returns 0 on failure, 1 on success
-    SI446X_ADC_CONF,                // struct SI446X_ADC_CONFIG
-    SI446X_RD_RX_BUF_SZ,            // int
-    SI446X_INIT,                    // NULL for default config, or pointer to struct SI446X_INIT_PROPS
-    SI446X_DEBUG_TX_PACKETS,        // Number of packets sent
-    SI446X_DEBUG_RX_PACKETS,        // Number of packets received
-    SI446X_DEBUG_RX_CORRUPT_PACKETS // Number of corrupt packets
+    SI446X_SET_STATE = 0xa,          // si446x_state_t state
+    SI446X_GET_STATE,                // si446x_state_t state
+    SI446X_GET_LATCHED_RSSI,         // int16_t rssi
+    SI446X_GET_RSSI,                 // int16_t rssi
+    SI446X_GET_INFO,                 // si446x_info_t info
+    SI446X_DISABLE_WUT,              // void
+    SI446X_SETUP_WUT,                // struct SI446X_WUT_CONFIG
+    SI446X_GET_TX_PWR,               // uint8_t tx power
+    SI446X_SET_TX_PWR,               // uint8_t tx_power
+    SI446X_GET_TEMP,                 // int32_t get temperature
+    SI446X_RD_GPIO,                  // uint8_t gpio state
+    SI446X_WR_GPIO,                  // struct SI446X_GPIO_CONFIG
+    SI446X_SET_LOW_BATT,             // uint16_t voltage
+    SI446X_ADC_BATT,                 // uint16_t voltage
+    SI446X_ADC_GPIO,                 // struct SI446X_ADC_GPIO_MEM
+    SI446X_SLEEP,                    // void, returns 0 on failure, 1 on success
+    SI446X_ADC_CONF,                 // struct SI446X_ADC_CONFIG
+    SI446X_RD_RX_BUF_SZ,             // int
+    SI446X_INIT,                     // NULL for default config, or pointer to struct SI446X_INIT_PROPS
+    SI446X_DEBUG_TX_PACKETS,         // Number of packets sent
+    SI446X_DEBUG_RX_PACKETS,         // Number of packets received
+    SI446X_DEBUG_RX_CORRUPT_PACKETS, // Number of corrupt packets
+    SI446X_SET_ONTX_STATE,           // State the device goes to after TX, default: Sleep
+    SI446X_SET_ONRX_STATE,           // State the device goes to after RX, default: Sleep
+    SI446X_GET_ONTX_STATE,           // State the device goes to after TX (return value)
+    SI446X_GET_ONRX_STATE,           // State the device goes to after RX (return value)
 };
 
 struct SI446X_WUT_CONFIG

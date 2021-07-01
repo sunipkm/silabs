@@ -49,6 +49,10 @@
 #define SI446X_MAX_DEVICES 1
 #endif
 
+#ifndef SI446X_FINISH_STATE
+#define SI446X_FINISH_STATE SI446X_STATE_SLEEP
+#endif
+
 #define SI446X_CB_DEBUG 0
 
 static dev_t device_num = 0; // major number
@@ -84,6 +88,8 @@ struct si446x
     dev_t this_dev;               // this device
     struct completion initq;      // init queue
     struct wait_queue_head rxq;   // RX queue
+    si446x_state_t on_tx_state;   // State after TX
+    si446x_state_t on_rx_state;   // State after RX
 };
 
 static inline int interrupt_off(struct si446x *dev)
@@ -678,7 +684,7 @@ void si446x_disable_wut(struct si446x *dev)
 static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
 {
     struct spi_device *spi;
-    int ret;
+    int ret, astate;
     u8 *din = (uint8_t *)kmalloc(len + 1, GFP_NOWAIT);
     u8 *dout = (uint8_t *)kmalloc(len + 1, GFP_NOWAIT);
     struct spi_transfer xfer =
@@ -692,6 +698,8 @@ static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
     dout[0] = SI446X_CMD_READ_RX_FIFO;
     spi = dev->spibus;
 
+    astate = READ_ONCE(dev->on_rx_state);
+
     mutex_lock(&(dev->lock));
     ret = spi_sync_transfer(spi, &xfer, 1); // assuming negative on error, zero on success
     mutex_unlock(&(dev->lock));
@@ -700,7 +708,7 @@ static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
         printk(KERN_ERR DRV_NAME "Error in internal read\n");
     }
     memcpy(buf, din + 1, len);
-    set_state(dev, SI446X_STATE_RX);
+    set_state(dev, astate);
     kfree(dout);
     kfree(din);
 }
@@ -955,7 +963,9 @@ static ssize_t si446x_write(struct file *filp, const char __user *buf, size_t co
 {
     struct si446x *dev;
     ssize_t i, out_count, err_count;
+    int astate;
     dev = (struct si446x *)(filp->private_data);
+    astate = READ_ONCE(dev->on_tx_state);
     if (!dev->device_avail)
     {
         return -EHOSTDOWN;
@@ -978,14 +988,14 @@ static ssize_t si446x_write(struct file *filp, const char __user *buf, size_t co
     {
         u8 buff[SI446X_MAX_PACKET_LEN];
         err_count -= copy_from_user(buff, buf + i, SI446X_MAX_PACKET_LEN);
-        while (si446x_tx(dev, buff, SI446X_MAX_PACKET_LEN, 0, SI446X_STATE_RX) == 0)
+        while (si446x_tx(dev, buff, SI446X_MAX_PACKET_LEN, 0, astate) == 0)
             ;
     }
     if (out_count > 0) // write last 128 bytes
     {
         u8 buff[SI446X_MAX_PACKET_LEN];
         err_count -= copy_from_user(buff, buf + i, out_count);
-        while (si446x_tx(dev, buff, out_count, 0, SI446X_STATE_RX) == 0)
+        while (si446x_tx(dev, buff, out_count, 0, astate) == 0)
             ;
     }
     return (i + out_count + err_count);
@@ -1108,6 +1118,11 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         int st;
         if (!dev->initd)
         {
+            retval = -EACCES;
+            break;
+        }
+        if ((st < 0) || (st > SI446X_STATE_RX))
+        {
             retval = -EINVAL;
             break;
         }
@@ -1115,6 +1130,49 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         if (!retval)
             set_state(dev, st);
         printk(KERN_DEBUG DRV_NAME "ioctl set state %d\n", st);
+        break;
+    }
+    case SI446X_SET_ONTX_STATE:
+    {
+        int st;
+        if (!dev->initd)
+        {
+            retval = -EACCES;
+            break;
+        }
+        retval = -copy_from_user_nofault(&st, ptr, sizeof(int));
+        if ((st < 0) || (st > SI446X_STATE_RX))
+        {
+            retval = -EINVAL;
+            break;
+        }
+        WRITE_ONCE(dev->on_tx_state, st);
+        break;
+    }
+    case SI446X_SET_ONRX_STATE:
+    {
+        int st;
+        if (!dev->initd)
+        {
+            retval = -EACCES;
+            break;
+        }
+        if ((st < 0) || (st > SI446X_STATE_RX))
+        {
+            retval = -EINVAL;
+            break;
+        }
+        WRITE_ONCE(dev->on_rx_state, st);
+        break;
+    }
+    case SI446X_GET_ONTX_STATE:
+    {
+        retval = dev->on_tx_state;
+        break;
+    }
+    case SI446X_GET_ONRX_STATE:
+    {
+        retval = dev->on_rx_state;
         break;
     }
     case SI446X_GET_STATE:
@@ -1581,12 +1639,14 @@ static int si446x_probe(struct spi_device *spi)
         printk(KERN_ERR DRV_NAME ": Error requesting IRQ, return %d\n", ret);
         goto err_init_serial;
     }
-    dev->open_ctr = 0;         // init counter 0
-    dev->device_avail = false; // device not available by default
-    dev->initd = false;        // device not initiated by default
-    dev->tx_pk_ctr = 0;        // initialize tx packet counter to zero
-    dev->rx_pk_ctr = 0;        // initialize rx packet counter to zero
-    dev->rx_corrupt_ctr = 0;   // initialize rx corrupt packet counter to zero
+    dev->open_ctr = 0;                      // init counter 0
+    dev->device_avail = false;              // device not available by default
+    dev->initd = false;                     // device not initiated by default
+    dev->tx_pk_ctr = 0;                     // initialize tx packet counter to zero
+    dev->rx_pk_ctr = 0;                     // initialize rx packet counter to zero
+    dev->rx_corrupt_ctr = 0;                // initialize rx corrupt packet counter to zero
+    dev->on_tx_state = SI446X_FINISH_STATE; // default: sleep on finish
+    dev->on_rx_state = SI446X_FINISH_STATE; // default: sleep on finish
     printk(KERN_INFO DRV_NAME ": Registered device at spi%d.%d, with SDN %d and IRQ %d at " DEVICE_NAME "%d\n", spi->controller->bus_num, spi->chip_select, dev->sdn_pin, dev->nirq_pin, mi);
     return 0;
 err_init_serial:
