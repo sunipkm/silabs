@@ -29,6 +29,7 @@
 #include <linux/circ_buf.h>
 #include <linux/platform_device.h>
 #include <linux/wait.h>
+#include <linux/poll.h>
 
 #include "si446x_kern.h"
 #include "si446x_config.h"
@@ -59,6 +60,7 @@ struct si446x
     u32 tx_pk_ctr;                // stat for tx packets
     u32 rx_pk_ctr;                // stat for rx packets
     u32 rx_corrupt_ctr;           // stat for corrupt rx packets
+    bool device_avail;            // Device available flag
     unsigned int isr_state;       // ISR lock state
     struct mutex isr_lock;        // mutex lock to prevent ISR from running
     u8 *config;                   // initialize as RADIO_CONFIGURATION_DATA_ARRAY
@@ -143,9 +145,7 @@ static unsigned char get_response(struct si446x *dev, void *buff, unsigned char 
         .tx_buf = dout,
         .rx_buf = din,
         .len = len + 2,
-        .bits_per_word = 8,
-        // .cs_change = 0
-    };
+        .bits_per_word = 8};
     struct spi_device *spi;
     // u8 i;
     cts = 0;
@@ -203,7 +203,6 @@ static void spi_write_buf(struct si446x *dev, void *out, u8 len)
         .tx_buf = out,
         .rx_buf = NULL,
         .len = len,
-        // .cs_change = 0,
         .bits_per_word = 8};
     spi = dev->spibus;
 
@@ -339,9 +338,7 @@ static u8 get_frr(struct si446x *dev, u8 reg)
             .tx_buf = dout,
             .rx_buf = din,
             .len = 2,
-            .bits_per_word = 8,
-            // .cs_change = 0
-        };
+            .bits_per_word = 8};
 
         dout[0] = reg;
         dout[1] = 0xff;
@@ -670,9 +667,7 @@ static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
             .tx_buf = dout,
             .rx_buf = din,
             .len = len + 1,
-            .bits_per_word = 8,
-            // .cs_change = 0
-        };
+            .bits_per_word = 8};
 
     memset(dout, 0xff, len + 1);
     dout[0] = SI446X_CMD_READ_RX_FIFO;
@@ -701,9 +696,7 @@ static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
         {
             .tx_buf = dout,
             .len = len + 2,
-            .bits_per_word = 8,
-            // .cs_change = 0
-        };
+            .bits_per_word = 8};
 
     memset(dout, 0xff, len + 1);
     dout[0] = SI446X_CMD_WRITE_TX_FIFO;
@@ -847,13 +840,13 @@ static void si446x_irq_work_handler(struct work_struct *work)
             tail = READ_ONCE(dev->rxbuf->tail);
             if (CIRC_SPACE(head, READ_ONCE(dev->rxbuf->tail), dev->rxbuf_len) >= len)
             {
-                int remainder = len % CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len);
+                int remainder = len % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1);
                 int seq_len = len - remainder;
                 /* Write the block making sure to wrap around the end of the buffer */
-                memcpy(dev->rxbuf->buf + head, buff, seq_len);
-                memcpy(dev->rxbuf->buf, buff + seq_len, remainder);
+                memcpy(dev->rxbuf->buf + head, buff, remainder);
+                memcpy(dev->rxbuf->buf, buff + remainder, seq_len);
                 WRITE_ONCE(dev->rxbuf->head, (head + len) & (dev->rxbuf_len - 1));
-                dev->data_available = true;
+                WRITE_ONCE(dev->data_available, true);
                 wake_up_interruptible(&(dev->rxq));
             }
             else
@@ -870,7 +863,7 @@ static void si446x_irq_work_handler(struct work_struct *work)
 static irqreturn_t si446x_irq(int irq, void *dev_id)
 {
     struct si446x *dev = dev_id;
-    if (dev->open_ctr)
+    if (dev->initd)
         schedule_work(&(dev->irq_work));
     return IRQ_HANDLED;
 }
@@ -879,12 +872,35 @@ static ssize_t si446x_read(struct file *filp, char __user *buf, size_t count, lo
 {
     struct si446x *dev;
     int head, tail, byte_count, out_count, remainder, seq_len;
+    bool avail;
     dev = (struct si446x *)(filp->private_data);
+    if (!dev->device_avail)
+    {
+        return -EHOSTDOWN;
+    }
     if (!dev->initd)
+    {
         return -EINVAL;
+    }
+    if ((filp->f_flags & O_ACCMODE) == O_WRONLY)
+    {
+        return -EACCES;
+    }
     if (count == 0)
+    {
         return 0;
-    wait_event_interruptible(dev->rxq, (dev->data_available == false)); // wait while byte count is zero
+    }
+    if ((filp->f_flags & O_NONBLOCK) == O_NONBLOCK) // non-blocking call
+    {
+        goto nonblock;
+    }
+    wait_event_interruptible(dev->rxq, (dev->data_available == true)); // wait while byte count is zero
+    avail = READ_ONCE(dev->data_available);
+    if (avail == false) // blocking call interrupted
+    {
+        return -EINTR;
+    }
+nonblock:
     head = READ_ONCE(dev->rxbuf->head);
     tail = READ_ONCE(dev->rxbuf->tail);
     byte_count = CIRC_CNT(head, tail, dev->rxbuf_len);
@@ -895,18 +911,18 @@ static ssize_t si446x_read(struct file *filp, char __user *buf, size_t count, lo
     else if (byte_count > 0)
     {
         out_count = byte_count;
-        dev->data_available = false;
+        WRITE_ONCE(dev->data_available, false);
     }
     else // should not trigger
     {
-        dev->data_available = false;
+        WRITE_ONCE(dev->data_available, false);
         goto ret;
     }
-    remainder = out_count % CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len);
+    remainder = out_count % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1);
     seq_len = out_count - remainder;
     /* Write the block making sure to wrap around the end of the buffer */
-    out_count -= copy_to_user(buf, dev->rxbuf->buf + tail, seq_len);
-    out_count -= copy_to_user(buf + seq_len, dev->rxbuf->buf, remainder);
+    out_count -= copy_to_user(buf, dev->rxbuf->buf + tail, remainder);
+    out_count -= copy_to_user(buf + remainder, dev->rxbuf->buf, seq_len);
     WRITE_ONCE(dev->rxbuf->tail, (tail + out_count) & (dev->rxbuf_len - 1));
     return out_count;
 ret:
@@ -918,8 +934,18 @@ static ssize_t si446x_write(struct file *filp, const char __user *buf, size_t co
     struct si446x *dev;
     ssize_t i, out_count, err_count;
     dev = (struct si446x *)(filp->private_data);
+    if (!dev->device_avail)
+    {
+        return -EHOSTDOWN;
+    }
     if (!dev->initd)
+    {
         return -EINVAL;
+    }
+    if ((filp->f_flags & O_ACCMODE) == O_RDONLY)
+    {
+        return -EACCES;
+    }
     if (count == 0)
     {
         return 0;
@@ -929,43 +955,99 @@ static ssize_t si446x_write(struct file *filp, const char __user *buf, size_t co
     for (i = 0; out_count > SI446X_MAX_PACKET_LEN; i += SI446X_MAX_PACKET_LEN, out_count -= SI446X_MAX_PACKET_LEN) // write > 128 bytes
     {
         u8 buff[SI446X_MAX_PACKET_LEN];
-        err_count += -copy_from_user(buff, buf + i, SI446X_MAX_PACKET_LEN);
+        err_count -= copy_from_user(buff, buf + i, SI446X_MAX_PACKET_LEN);
         while (si446x_tx(dev, buff, SI446X_MAX_PACKET_LEN, 0, SI446X_STATE_RX) == 0)
             ;
     }
     if (out_count > 0) // write last 128 bytes
     {
         u8 buff[SI446X_MAX_PACKET_LEN];
-        err_count += -copy_from_user(buff, buf + i, out_count);
+        err_count -= copy_from_user(buff, buf + i, out_count);
         while (si446x_tx(dev, buff, out_count, 0, SI446X_STATE_RX) == 0)
             ;
     }
     return (i + out_count + err_count);
 }
 
+static unsigned int si446x_poll(struct file *filp, struct poll_table_struct *poll_table)
+{
+    __poll_t mask;
+    struct si446x *dev;
+    bool data_avail;
+    dev = (struct si446x *)filp->private_data;
+    mask = 0;
+    if (!dev->device_avail)
+    {
+        mask |= POLLERR;
+        goto ret;
+    }
+    data_avail = READ_ONCE(dev->data_available); // check if data is already available
+
+    if (!data_avail) // if data is not available
+    {
+        poll_wait(filp, &(dev->rxq), poll_table);    // wait on the rx queue
+        data_avail = READ_ONCE(dev->data_available); // check if data available, otherwise indicate timeout
+    }
+
+    if (data_avail) // if data is available, set POLLIN
+    {
+        mask |= POLLIN | POLLRDNORM;
+    }
+ret:
+    return mask;
+}
+
 static int si446x_open(struct inode *inod, struct file *filp)
 {
     struct si446x *dev;
     struct cdev *tcdev;
+    si446x_info_t info[1];
+    int retval, i;
+    char *buf, val;
+    int open_ctr;
     tcdev = inod->i_cdev;
     dev = container_of(tcdev, struct si446x, serdev);
     filp->private_data = (void *)dev; // this is what sets this for read/write() to work
-    if (dev->open_ctr == 0)           // reset device on very first open
+    open_ctr = READ_ONCE(dev->open_ctr);
+    open_ctr++;
+    WRITE_ONCE(dev->open_ctr, open_ctr);
+    retval = 0;
+    if (open_ctr == 1) // reset device on very first open
+    {
+        dev->initd = false;
         reset_device(dev);
-    dev->open_ctr++;
-    try_module_get(THIS_MODULE); // increment use count
-    return 0;
+        si446x_get_info(dev, info);
+        buf = (char *)info;
+        val = 0xff;
+        for (i = 0; i < sizeof(si446x_info_t); i++)
+            val &= buf[i];
+        if (val == 0xff)
+        {
+            printk(KERN_ERR DRV_NAME ": Device not responding on SPI\n");
+            retval = -EHOSTDOWN;          // signal that host is down
+            WRITE_ONCE(dev->open_ctr, 0); // reset open counter
+        }
+        else
+        {
+            WRITE_ONCE(dev->device_avail, true);
+        }
+    }
+    return retval;
 }
 
 static int si446x_release(struct inode *inod, struct file *filp)
 {
     struct si446x *dev;
     struct cdev *tcdev;
+    int open_ctr;
     tcdev = inod->i_cdev;
     dev = container_of(tcdev, struct si446x, serdev);
     if (dev != filp->private_data)
         return -ESTALE;
-    if (!(dev->open_ctr)) // reset device on very last close
+    open_ctr = READ_ONCE(dev->open_ctr);
+    open_ctr--;
+    WRITE_ONCE(dev->open_ctr, open_ctr);
+    if (!(open_ctr)) // reset device on very last close
     {
         dev->data_available = false;
         dev->rxbuf->head = 0;
@@ -975,10 +1057,10 @@ static int si446x_release(struct inode *inod, struct file *filp)
         si446x_sleep(dev);
         dev->enabledInterrupts[IRQ_PACKET] = 0;
         dev->isr_state = 0;
+        dev->initd = false;
+        dev->device_avail = false;
         mutex_unlock(&(dev->isr_lock)); // force unlock irq lock
     }
-    dev->open_ctr--;
-    module_put(THIS_MODULE); // decrement module count
     return 0;
 }
 
@@ -989,6 +1071,10 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     void *ptr;
     dev = (struct si446x *)filp->private_data;
     ptr = (void __user *)arg;
+    if (!dev->device_avail)
+    {
+        return -EHOSTDOWN;
+    }
     switch (cmd)
     {
     case SI446X_SET_STATE:
@@ -1217,6 +1303,7 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     {
         struct SI446X_INIT_PROPS init_props[1];
         u8 config[] = RADIO_CONFIGURATION_DATA_ARRAY;
+        reset_device(dev);
         memset(init_props, 0x0, sizeof(struct SI446X_INIT_PROPS));
         if (arg == 0)
         {
@@ -1289,7 +1376,8 @@ static const struct file_operations si446x_fops = {.owner = THIS_MODULE,
                                                    .unlocked_ioctl =
                                                        si446x_ioctl,
                                                    .read = si446x_read,
-                                                   .write = si446x_write};
+                                                   .write = si446x_write,
+                                                   .poll = si446x_poll};
 
 static int si446x_probe(struct spi_device *spi)
 {
@@ -1454,8 +1542,9 @@ static int si446x_probe(struct spi_device *spi)
         printk(KERN_ERR DRV_NAME ": Error requesting IRQ, return %d\n", ret);
         goto err_init_serial;
     }
-    dev->open_ctr = 0; // init counter 0
-    dev->initd = false;
+    dev->open_ctr = 0;         // init counter 0
+    dev->device_avail = false; // device not available by default
+    dev->initd = false;        // device not initiated by default
     printk(KERN_INFO DRV_NAME ": Registered device at spi%d.%d, with SDN %d and IRQ %d at " DEVICE_NAME "%d\n", spi->controller->bus_num, spi->chip_select, dev->sdn_pin, dev->nirq_pin, mi);
     return 0;
 err_init_serial:
