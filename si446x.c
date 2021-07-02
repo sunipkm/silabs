@@ -790,6 +790,7 @@ static int si446x_tx(struct si446x *dev, void *packet, u8 len, u8 channel, si446
 
     si446x_do_api(dev, data, sizeof(data), NULL, 0);
     retcode = len;
+    dev->tx_pk_ctr++;
 cleanup:
     interrupt_on(dev);
 ret:
@@ -842,8 +843,8 @@ static void si446x_irq_work_handler(struct work_struct *work)
     bool read_rx_fifo = false;
     struct si446x *dev;
     dev = container_of(work, struct si446x, irq_work);
-    mutex_lock(&(dev->isr_lock)); // lock down the mutex
-    WRITE_ONCE(dev->isr_busy, true); // indicate IRQ is busy
+    mutex_lock(&(dev->isr_lock));                            // lock down the mutex
+    WRITE_ONCE(dev->isr_busy, true);                         // indicate IRQ is busy
     while ((irq_avail = gpio_get_value(dev->nirq_pin)) == 0) // IRQ low
     {
         u8 interrupts[8];
@@ -851,6 +852,31 @@ static void si446x_irq_work_handler(struct work_struct *work)
         interrupts[2] &= dev->enabledInterrupts[IRQ_PACKET];
         interrupts[4] &= dev->enabledInterrupts[IRQ_MODEM];
         interrupts[6] &= dev->enabledInterrupts[IRQ_CHIP];
+// This segment deals with invalid sync and related occassional radio lock ups
+/*       
+#define SI446X_CBS_INVALIDSYNC		_BV(5)
+        // Valid PREAMBLE and SYNC, packet data now begins
+        if (interrupts[4] & (1 << SI446X_SYNC_DETECT_PEND))
+        {
+            si446x_setup_callback(dev, SI446X_CBS_INVALIDSYNC, 1); // Enable INVALID_SYNC when a new packet starts, sometimes a corrupted packet will mess the radio up
+        }
+
+        // Disable INVALID_SYNC
+        if ((interrupts[4] & (1 << SI446X_INVALID_SYNC_PEND)) || (interrupts[2] & ((1 << SI446X_PACKET_SENT_PEND) | (1 << SI446X_CRC_ERROR_PEND))))
+        {
+            si446x_setup_callback(dev, SI446X_CBS_INVALIDSYNC, 0); // disble INVALID_SYNC if one is detected
+        }
+
+        // INVALID_SYNC detected, sometimes the radio gets messed up in this state and requires a RX restart
+        if (interrupts[4] & (1 << SI446X_INVALID_SYNC_PEND))
+        {
+            set_state(dev, SI446X_STATE_SLEEP);
+            delay_us(500);
+            set_state(dev, SI446X_STATE_READY);
+            continue;
+        }
+#undef SI446X_CBS_INVALIDSYNC
+*/
         // valid packet
         if (interrupts[2] & (1 << SI446X_PACKET_RX_PEND))
         {
@@ -873,7 +899,6 @@ static void si446x_irq_work_handler(struct work_struct *work)
         // packet sent
         if (interrupts[2] & (1 << SI446X_PACKET_SENT_PEND))
         {
-            dev->tx_pk_ctr++;
             SI446X_CB_SENT();
         }
         // low battery
