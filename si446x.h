@@ -31,16 +31,16 @@ typedef uint32_t u32;
 */
 typedef struct
 {
-    u8 chipRev;   ///< Chip revision
+    u8 chip_rev;   ///< Chip revision
     u16 part;     ///< Part ID
-    u8 partBuild; ///< Part build
+    u8 part_build; ///< Part build
     u16 id;       ///< ID
     u8 customer;  ///< Customer
-    u8 romId;     ///< ROM ID (3 = revB1B, 6 = revC2A)
+    u8 rom_id;     ///< ROM ID (3 = revB1B, 6 = revC2A)
 
-    u8 revExternal; ///< Revision external
-    u8 revBranch;   ///< Revision branch
-    u8 revInternal; ///< Revision internal
+    u8 rev_external; ///< Revision external
+    u8 rev_branch;   ///< Revision branch
+    u8 rev_internal; ///< Revision internal
     u16 patch;      ///< Patch
     u8 func;        ///< Function
 } si446x_info_t;

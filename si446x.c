@@ -36,6 +36,10 @@
 #include "si446x_defs.h"
 #include "si446x.h"
 
+static int si446x_buffer_len = 16;
+module_param(si446x_buffer_len, int, S_IRUSR | S_IWUSR);
+MODULE_PARM_DESC(si446x_buffer_len, "RX buffer length. Default: 16 * 128 Bytes, minimum 128 bytes, maximum 16 KiB");
+
 #define DRV_NAME "si446x"
 #define DRV_VERSION "1.0a"
 #define DEVICE_NAME "ttyUHF"
@@ -91,6 +95,36 @@ struct si446x
     struct wait_queue_head rxq;   // RX queue
     si446x_state_t on_tx_state;   // State after TX
     si446x_state_t on_rx_state;   // State after RX
+                                  //	Current consumption: 1.8mA
+    /**
+     * @brief Mode to enter when radio is idle.
+     * The radio is put into idle mode when new data is being loaded for transmission,
+     * just before starting receiver and after receiving a packet. This option affects
+     * response time to TX/RX mode and power consumption.
+     * 
+     * NOTE: After receiving an invalid packet, the radio can be put into sleep mode
+     * instead of the option chosen here, depending on the SI446X_SLEEP_ON_INVALID option.
+     * Putting the radio into sleep mode temporarily fixes an issue with INVALID_SYNC
+     * causing the radio to lock up.
+     * 
+     * SI446X_STATE_SPI_ACTIVE:
+     * Response time: 340 us
+     * Current consumption: 1.35 mA
+     * 
+     * SI446X_STATE_READY:
+     * Response time: 100 us
+     * Current consumption: 1.8 mA
+     * 
+     */
+    si446x_state_t SI446X_IDLE_MODE;
+    /**
+     * @brief Determines whether to go into sleep mode for an invalid packet during execution
+     * of the interrupt handler. This option is disabled by default, and can be manipulated by
+     * performing an ioctl call with SI446X_SLEEP_ON_INVALID command, and an int as a parameter.
+     * If the integer is NULL or 0, sleep_on_invalid is false; else it is set to true.
+     * 
+     */
+    bool sleep_on_invalid;
 };
 
 static inline int interrupt_off(struct si446x *dev)
@@ -407,19 +441,19 @@ void si446x_get_info(struct si446x *dev, si446x_info_t *info)
     out[0] = SI446X_CMD_PART_INFO;
     si446x_do_api(dev, out, 1, data, 8);
 
-    info->chipRev = data[0];
+    info->chip_rev = data[0];
     info->part = (data[1] << 8) | data[2];
-    info->partBuild = data[3];
+    info->part_build = data[3];
     info->id = (data[4] << 8) | data[5];
     info->customer = data[6];
-    info->romId = data[7];
+    info->rom_id = data[7];
 
     out[0] = SI446X_CMD_FUNC_INFO;
     si446x_do_api(dev, out, 1, data, 6);
 
-    info->revExternal = data[0];
-    info->revBranch = data[1];
-    info->revInternal = data[2];
+    info->rev_external = data[0];
+    info->rev_branch = data[1];
+    info->rev_internal = data[2];
     info->patch = (data[3] << 8) | data[4];
     info->func = data[5];
 }
@@ -775,7 +809,7 @@ static int si446x_tx(struct si446x *dev, void *packet, u8 len, u8 channel, si446
         goto cleanup;
     }
 
-    set_state(dev, SI446X_IDLE_MODE);
+    set_state(dev, dev->SI446X_IDLE_MODE);
     clear_fifo(dev);
     interrupt2(dev, NULL, 0, 0, 0xFF);
 
@@ -850,36 +884,38 @@ static void si446x_irq_work_handler(struct work_struct *work)
     WRITE_ONCE(dev->isr_busy, true);                         // indicate IRQ is busy
     while ((irq_avail = gpio_get_value(dev->nirq_pin)) == 0) // IRQ low
     {
+        bool sleep_on_invalid;
         u8 interrupts[8];
         interrupt(dev, interrupts);
         interrupts[2] &= dev->enabledInterrupts[IRQ_PACKET];
         interrupts[4] &= dev->enabledInterrupts[IRQ_MODEM];
         interrupts[6] &= dev->enabledInterrupts[IRQ_CHIP];
-// This segment deals with invalid sync and related occassional radio lock ups
-/*       
-#define SI446X_CBS_INVALIDSYNC		_BV(5)
-        // Valid PREAMBLE and SYNC, packet data now begins
-        if (interrupts[4] & (1 << SI446X_SYNC_DETECT_PEND))
+        // This segment deals with invalid sync and related occassional radio lock ups
+        sleep_on_invalid = READ_ONCE(dev->sleep_on_invalid);
+        if (sleep_on_invalid)
         {
-            si446x_setup_callback(dev, SI446X_CBS_INVALIDSYNC, 1); // Enable INVALID_SYNC when a new packet starts, sometimes a corrupted packet will mess the radio up
-        }
+#define SI446X_CBS_INVALIDSYNC _BV(5)
+            // Valid PREAMBLE and SYNC, packet data now begins
+            // Enable invalid sync callback
+            if (interrupts[4] & (1 << SI446X_SYNC_DETECT_PEND))
+            {
+                si446x_setup_callback(dev, SI446X_CBS_INVALIDSYNC, 1); // Enable INVALID_SYNC when a new packet starts, sometimes a corrupted packet will mess the radio up
+            }
 
-        // Disable INVALID_SYNC
-        if ((interrupts[4] & (1 << SI446X_INVALID_SYNC_PEND)) || (interrupts[2] & ((1 << SI446X_PACKET_SENT_PEND) | (1 << SI446X_CRC_ERROR_PEND))))
-        {
-            si446x_setup_callback(dev, SI446X_CBS_INVALIDSYNC, 0); // disble INVALID_SYNC if one is detected
-        }
+            // Disable INVALID_SYNC callback to service the issue
+            if ((interrupts[4] & (1 << SI446X_INVALID_SYNC_PEND)) || (interrupts[2] & ((1 << SI446X_PACKET_SENT_PEND) | (1 << SI446X_CRC_ERROR_PEND))))
+            {
+                si446x_setup_callback(dev, SI446X_CBS_INVALIDSYNC, 0); // disble INVALID_SYNC if one is detected
+            }
 
-        // INVALID_SYNC detected, sometimes the radio gets messed up in this state and requires a RX restart
-        if (interrupts[4] & (1 << SI446X_INVALID_SYNC_PEND))
-        {
-            set_state(dev, SI446X_STATE_SLEEP);
-            delay_us(500);
-            set_state(dev, SI446X_STATE_READY);
-            continue;
-        }
+            // INVALID_SYNC detected, sometimes the radio gets messed up in this state and requires a RX restart
+            // Hence device is put in sleep mode
+            if (interrupts[4] & (1 << SI446X_INVALID_SYNC_PEND))
+            {
+                set_state(dev, SI446X_STATE_SLEEP);
+            }
 #undef SI446X_CBS_INVALIDSYNC
-*/
+        }
         // valid packet
         if (interrupts[2] & (1 << SI446X_PACKET_RX_PEND))
         {
@@ -897,6 +933,11 @@ static void si446x_irq_work_handler(struct work_struct *work)
         if (interrupts[2] & (1 << SI446X_CRC_ERROR_PEND))
         {
             dev->rx_corrupt_ctr++;
+            if (sleep_on_invalid)
+            {
+                if (get_state(dev) == SI446X_STATE_SPI_ACTIVE) // get_state will cause the device to get out of sleep mode and into SPI active mode
+                    set_state(dev, dev->SI446X_IDLE_MODE);
+            }
             SI446X_CB_RXINVALID(get_latched_rssi(dev));
         }
         // packet sent
@@ -948,10 +989,14 @@ static void si446x_irq_work_handler(struct work_struct *work)
 
 static irqreturn_t si446x_irq(int irq, void *dev_id)
 {
+    int initd;
+    bool isr_busy;
     struct si446x *dev = dev_id;
-    if (dev->initd)
-        schedule_work(&(dev->irq_work));
-    return IRQ_HANDLED;
+    initd = READ_ONCE(dev->initd);       // check if device is initialized
+    isr_busy = READ_ONCE(dev->isr_busy); // check if already servicing an interrupt
+    if (initd && (!isr_busy))
+        schedule_work(&(dev->irq_work)); // if device is initialized and not servicing an interrupt currently, queue the ISR
+    return IRQ_HANDLED;                  // indicate IRQ has been handled
 }
 
 static ssize_t si446x_read(struct file *filp, char __user *buf, size_t count, loff_t *offset)
@@ -960,15 +1005,15 @@ static ssize_t si446x_read(struct file *filp, char __user *buf, size_t count, lo
     int head, tail, byte_count, out_count, remainder, seq_len;
     bool avail;
     dev = (struct si446x *)(filp->private_data);
-    if (!dev->device_avail)
+    if (!dev->device_avail) // device is not available
     {
         return -EHOSTDOWN;
     }
-    if (!dev->initd)
+    if (!dev->initd) // device not initialized
     {
         return -EINVAL;
     }
-    if ((filp->f_flags & O_ACCMODE) == O_WRONLY)
+    if ((filp->f_flags & O_ACCMODE) == O_WRONLY) // device not opened as write only
     {
         return -EACCES;
     }
@@ -980,6 +1025,7 @@ static ssize_t si446x_read(struct file *filp, char __user *buf, size_t count, lo
     {
         goto nonblock;
     }
+    // else
     wait_event_interruptible(dev->rxq, (dev->data_available == true)); // wait while byte count is zero
     avail = READ_ONCE(dev->data_available);
     if (avail == false) // blocking call interrupted
@@ -1004,12 +1050,12 @@ nonblock:
         WRITE_ONCE(dev->data_available, false);
         goto ret;
     }
-    remainder = out_count % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1);
-    seq_len = out_count - remainder;
+    remainder = out_count % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1); // number of bytes to read till end of buffer
+    seq_len = out_count - remainder;                                             // number of bytes to read after wrap-around (if any)
     /* Write the block making sure to wrap around the end of the buffer */
-    out_count -= copy_to_user(buf, dev->rxbuf->buf + tail, remainder);
-    out_count -= copy_to_user(buf + remainder, dev->rxbuf->buf, seq_len);
-    WRITE_ONCE(dev->rxbuf->tail, (tail + out_count) & (dev->rxbuf_len - 1));
+    out_count -= copy_to_user(buf, dev->rxbuf->buf + tail, remainder);       // read from tail
+    out_count -= copy_to_user(buf + remainder, dev->rxbuf->buf, seq_len);    // wrap around
+    WRITE_ONCE(dev->rxbuf->tail, (tail + out_count) & (dev->rxbuf_len - 1)); // update position of head
     return out_count;
 ret:
     return 0;
@@ -1560,25 +1606,25 @@ static int si446x_probe(struct spi_device *spi)
         goto err_alloc_main;
     }
 
-    pdev = &(spi->dev);
+    pdev = &(spi->dev); // get platform device
 
-    dev->spibus = spi;
+    dev->spibus = spi; // assign spi bus
 
-    spi_set_drvdata(spi, dev);
-
+    spi_set_drvdata(spi, dev); // set pointer to si446x
+    // read pin numbers from device tree
     if (of_property_read_s32(pdev->of_node, "sdn_pin", &(sdn_pin)))
     {
         printk(KERN_ERR DRV_NAME ": Error reading SDN pin number, read %d\n", sdn_pin);
         ret = -ENODATA;
         goto err_main;
     }
-
     if (of_property_read_s32(pdev->of_node, "irq_pin", &(nirq_pin)))
     {
         printk(KERN_ERR DRV_NAME ": Error reading IRQ pin number, read %d\n", nirq_pin);
         ret = -ENODATA;
         goto err_main;
     }
+    // request gpio pin
     ret = gpio_request(sdn_pin, DRV_NAME "_gpio_sdn");
     if (ret)
     {
@@ -1586,12 +1632,14 @@ static int si446x_probe(struct spi_device *spi)
         ret = -ENODEV;
         goto err_main;
     }
+    // check if pin is valid
     if (!gpio_is_valid(sdn_pin))
     {
         printk(KERN_ERR DRV_NAME ": %d not valid GPIO pin\n", sdn_pin);
         ret = -ENODEV;
         goto err_main;
     }
+    // set direction of SDN pin
     ret = gpio_direction_output(sdn_pin, 0);
     if (ret)
     {
@@ -1599,6 +1647,7 @@ static int si446x_probe(struct spi_device *spi)
         ret = -ENODEV;
         goto err_main;
     }
+    // request interrupt on NIRQ pin
     ret = gpio_request(nirq_pin, DRV_NAME "_gpio_nirq");
     if (ret)
     {
@@ -1606,35 +1655,47 @@ static int si446x_probe(struct spi_device *spi)
         ret = -ENODEV;
         goto err_main;
     }
+    // check if NIRQ pin is a valid GPIO, this pin is read in the interrupt handler task
     if (!gpio_is_valid(nirq_pin))
     {
         printk(KERN_ERR DRV_NAME ": %d not valid GPIO pin\n", nirq_pin);
         ret = -ENODEV;
         goto err_main;
     }
-
+    // store the pin IDs
     dev->sdn_pin = sdn_pin;
     dev->nirq_pin = nirq_pin;
     if (!minor_ct) // only for the first probe create class
         si446x_class = class_create(THIS_MODULE, DRV_NAME "_class");
-    if (!si446x_class)
+    if (!si446x_class) // could not allocate class
     {
         ret = -ENOMEM;
         printk(KERN_ERR DRV_NAME ": Error allocating memory for class\n");
         goto err_main;
     }
-
-    dev->rxbuf = kmalloc(sizeof(struct circ_buf), GFP_KERNEL);
+    dev->rxbuf = kmalloc(sizeof(struct circ_buf), GFP_KERNEL); // allocate memory 
     if (!(dev->rxbuf))
     {
         ret = -ENOMEM;
         printk(KERN_ERR DRV_NAME ": Error allocating memory for receiver buffer\n");
         goto err_main;
     }
-    if ((dev->rxbuf_len < SI446X_MAX_PACKET_LEN) || (dev->rxbuf_len > 128 * SI446X_MAX_PACKET_LEN)) // malloc
-        dev->rxbuf_len = 16 * SI446X_MAX_PACKET_LEN;
-    dev->rxbuf->buf = kzalloc(dev->rxbuf_len, GFP_KERNEL);
-    if (!dev->rxbuf->buf)
+    if (!(si446x_buffer_len & (si446x_buffer_len - 1))) // length is not power of 2
+    {
+        // round up to nearest power of 2 (up to 256)
+        si446x_buffer_len--;
+        si446x_buffer_len |= si446x_buffer_len >> 1;
+        si446x_buffer_len |= si446x_buffer_len >> 2;
+        si446x_buffer_len |= si446x_buffer_len >> 4;
+        si446x_buffer_len++;
+    }
+    if ((si446x_buffer_len < 0x10))                             // minimum 16 packet buffer (2 KiB)
+        si446x_buffer_len = 0x10;                               // minimum
+    if (si446x_buffer_len > 0x80)                               // max 128 packet buffer (16 KiB)
+        si446x_buffer_len = 0x80;                               // maximum
+    dev->rxbuf_len = si446x_buffer_len * SI446X_MAX_PACKET_LEN; // determine size
+    dev->rxbuf->buf = kzalloc(dev->rxbuf_len, GFP_KERNEL);      // allocate memory
+    if (!dev->rxbuf->buf) // allocation failed for buffer
     {
         ret = -ENOMEM;
         printk(KERN_ERR DRV_NAME ": Error allocating memory for receiver buffer\n");
@@ -1643,14 +1704,14 @@ static int si446x_probe(struct spi_device *spi)
     ret = 0; // making sure ret = 0 at this point
     if (!minor_ct)
         ret = alloc_chrdev_region(&device_num, 0, SI446X_MAX_DEVICES, DRV_NAME "_" DEVICE_NAME);
-    if ((!ret) || (minor_ct > 0))
+    if ((!ret) || (minor_ct > 0)) // chardev region allocation successful
     {
         ma = MAJOR(device_num);
         mi = minor_ct++;
-        this_dev = MKDEV(ma, mi);
-        cdev_init(&(dev->serdev), &si446x_fops);
-        ret = cdev_add(&(dev->serdev), this_dev, 1);
-        if (ret)
+        this_dev = MKDEV(ma, mi); // make new device
+        cdev_init(&(dev->serdev), &si446x_fops); // init chardev
+        ret = cdev_add(&(dev->serdev), this_dev, 1); // add chardev
+        if (ret) // error initializing
         {
             printk(KERN_ERR DRV_NAME ": Error adding serial device interface for major %d minor %d\n", ma, mi);
             minor_ct--;
@@ -1688,15 +1749,16 @@ static int si446x_probe(struct spi_device *spi)
         printk(KERN_ERR DRV_NAME ": Error requesting IRQ, return %d\n", ret);
         goto err_init_serial;
     }
-    dev->open_ctr = 0;                      // init counter 0
-    dev->device_avail = false;              // device not available by default
-    dev->initd = false;                     // device not initiated by default
-    dev->isr_busy = false;                  // ISR not busy by default
-    dev->tx_pk_ctr = 0;                     // initialize tx packet counter to zero
-    dev->rx_pk_ctr = 0;                     // initialize rx packet counter to zero
-    dev->rx_corrupt_ctr = 0;                // initialize rx corrupt packet counter to zero
-    dev->on_tx_state = SI446X_FINISH_STATE; // default: sleep on finish
-    dev->on_rx_state = SI446X_FINISH_STATE; // default: sleep on finish
+    dev->open_ctr = 0;                          // init counter 0
+    dev->device_avail = false;                  // device not available by default
+    dev->initd = false;                         // device not initiated by default
+    dev->isr_busy = false;                      // ISR not busy by default
+    dev->tx_pk_ctr = 0;                         // initialize tx packet counter to zero
+    dev->rx_pk_ctr = 0;                         // initialize rx packet counter to zero
+    dev->rx_corrupt_ctr = 0;                    // initialize rx corrupt packet counter to zero
+    dev->on_tx_state = SI446X_FINISH_STATE;     // default: sleep on finish
+    dev->on_rx_state = SI446X_FINISH_STATE;     // default: sleep on finish
+    dev->SI446X_IDLE_MODE = SI446X_STATE_READY; // default: Ready
     printk(KERN_INFO DRV_NAME ": Registered device at spi%d.%d, with SDN %d and IRQ %d at " DEVICE_NAME "%d\n", spi->controller->bus_num, spi->chip_select, dev->sdn_pin, dev->nirq_pin, mi);
     return 0;
 err_init_serial:
