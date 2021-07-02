@@ -153,8 +153,8 @@ enum SI446X_IOCTL
 
 struct SI446X_WUT_CONFIG
 {
-    unsigned char r;
-    unsigned short m;
+    unsigned char r;  // r = 1; while (((int) t >> (r++ + 2)) > 1);
+    unsigned short m; // m = t * 2^(13 - r)
     unsigned char ldc;
     unsigned char config;
 };

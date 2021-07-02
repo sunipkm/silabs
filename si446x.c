@@ -326,7 +326,7 @@ void si446x_setup_callback(struct si446x *dev, u16 callbacks, u8 state)
 
     int ret = interrupt_off(dev);
     {
-        uint8_t data[2];
+        u8 data[2];
         si446x_get_props(dev, SI446X_INT_CTL_PH_ENABLE, data, sizeof(data));
 
         if (state)
@@ -342,6 +342,9 @@ void si446x_setup_callback(struct si446x *dev, u16 callbacks, u8 state)
 
         // TODO
         // make sure RXCOMPELTE, RXINVALID and RXBEGIN? are always enabled
+        // always keep RXBEGIN enabled
+        data[0] |= SI446X_CBS_RXBEGIN >> 8;
+        data[1] |= SI446X_CBS_RXBEGIN;
 
         dev->enabledInterrupts[IRQ_PACKET] = data[0];
         dev->enabledInterrupts[IRQ_MODEM] = data[1];
@@ -578,7 +581,7 @@ u8 si446x_read_gpio(struct si446x *dev)
 }
 
 /*
-u8 si446x_dump(struct si446x *dev, void *buff, uint8_t group)
+u8 si446x_dump(struct si446x *dev, void *buff, u8 group)
 {
     static const u8 groupSizes[] = {
         SI446X_PROP_GROUP_GLOBAL, 0x0A,
@@ -692,12 +695,12 @@ void si446x_disable_wut(struct si446x *dev)
     interrupt_on(dev);
 }
 
-static void si446x_internal_read(struct si446x *dev, uint8_t *buf, ssize_t len)
+static void si446x_internal_read(struct si446x *dev, u8 *buf, ssize_t len)
 {
     struct spi_device *spi;
     int ret, astate;
-    u8 *din = (uint8_t *)kmalloc(len + 1, GFP_NOWAIT);
-    u8 *dout = (uint8_t *)kmalloc(len + 1, GFP_NOWAIT);
+    u8 *din = (u8 *)kmalloc(len + 1, GFP_NOWAIT);
+    u8 *dout = (u8 *)kmalloc(len + 1, GFP_NOWAIT);
     struct spi_transfer xfer =
         {
             .tx_buf = dout,
