@@ -1035,7 +1035,6 @@ static int si446x_open(struct inode *inod, struct file *filp)
     struct cdev *tcdev;
     si446x_info_t info[1];
     int retval, i;
-    char *buf, val;
     int open_ctr;
     tcdev = inod->i_cdev;
     dev = container_of(tcdev, struct si446x, serdev);
@@ -1052,14 +1051,9 @@ static int si446x_open(struct inode *inod, struct file *filp)
         printk(KERN_DEBUG DRV_NAME ": Reset device\n");
         si446x_get_info(dev, info);
         printk(KERN_DEBUG DRV_NAME ": Get info in open\n");
-        buf = (char *)info;
-        val = 0x0;
-        for (i = 0; i < sizeof(si446x_info_t); i++)
-            val |= buf[i];
-        printk(KERN_DEBUG DRV_NAME ": Info -> 0x%x\n", val);
-        if ((val & 0x7f) == 0x0)
+        if ((info->part & 0x4460) != 0x4460)
         {
-            printk(KERN_ERR DRV_NAME ": Device not responding on SPI\n");
+            printk(KERN_ERR DRV_NAME ": Not Si446x device, returned 0x%x\n", info->part);
             retval = -EHOSTDOWN;          // signal that host is down
             WRITE_ONCE(dev->open_ctr, 0); // reset open counter
         }
