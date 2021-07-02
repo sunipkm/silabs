@@ -76,6 +76,7 @@ struct si446x
     bool device_avail;            // Device available flag
     unsigned int isr_state;       // ISR lock state
     struct mutex isr_lock;        // mutex lock to prevent ISR from running
+    bool isr_busy;                // indicate ISR is busy
     u8 *config;                   // initialize as RADIO_CONFIGURATION_DATA_ARRAY
     u32 config_len;               // length of RADIO_CONFIGURATION_DATA_ARRAY
     u8 enabledInterrupts[3];      // enabled interrupts
@@ -95,22 +96,32 @@ struct si446x
 static inline int interrupt_off(struct si446x *dev)
 {
     int isr_state;
-    isr_state = READ_ONCE(dev->isr_state);
-    if (isr_state == 0)
-        mutex_trylock(&(dev->isr_lock)); // prevent ISR from running
-    WRITE_ONCE(dev->isr_state, isr_state + 1);
+    bool isr_busy;
+    isr_busy = READ_ONCE(dev->isr_busy); // check if ISR is busy first
+    if (!isr_busy)
+    {
+        isr_state = READ_ONCE(dev->isr_state);
+        WRITE_ONCE(dev->isr_state, isr_state + 1);
+        if (isr_state == 0)
+            mutex_lock(&(dev->isr_lock)); // prevent ISR from running
+    }
     return 1;
 }
 
 static inline int interrupt_on(struct si446x *dev)
 {
     int isr_state;
-    isr_state = READ_ONCE(dev->isr_state);
-    if (READ_ONCE(dev->isr_state) > 0)
-        WRITE_ONCE(dev->isr_state, isr_state - 1);
-    isr_state = READ_ONCE(dev->isr_state);
-    if (READ_ONCE(dev->isr_state) == 0)
-        mutex_unlock(&(dev->isr_lock)); // Allow ISR to run
+    bool isr_busy;
+    isr_busy = READ_ONCE(dev->isr_busy); // check if ISR is busy first
+    if (!isr_busy)
+    {
+        isr_state = READ_ONCE(dev->isr_state);
+        if (isr_state > 0)
+            WRITE_ONCE(dev->isr_state, isr_state - 1);
+        isr_state = READ_ONCE(dev->isr_state);
+        if (isr_state == 0)
+            mutex_unlock(&(dev->isr_lock)); // Allow ISR to run
+    }
     return 0;
 }
 
@@ -809,6 +820,21 @@ static void si446x_init_work_handler(struct work_struct *work)
     printk(KERN_DEBUG DRV_NAME ": Signalled end of init\n");
 }
 
+/*
+ * If some other process is ongoing, isr_lock is locked so ISR can not execute.
+ * 
+ * Once the lock unlocks, ISR can lock. After lock, it updates isr_busy.
+ * 
+ * If another process tries to turn off interrupt just as ISR is locking,
+ * it will see isr_busy as false, and proceed to obtain the lock (after incrementing
+ * isr_state). However, by that time, isr_lock has been locked and the function
+ * trying to prevent ISR from running will wait until ISR is executed. Any do_api
+ * calls inside the ISR will however do not care since at this point isr_busy is
+ * true and it will not try to lock isr_lock.
+ * 
+ *  
+ */
+
 static void si446x_irq_work_handler(struct work_struct *work)
 {
     int irq_avail;
@@ -816,7 +842,8 @@ static void si446x_irq_work_handler(struct work_struct *work)
     bool read_rx_fifo = false;
     struct si446x *dev;
     dev = container_of(work, struct si446x, irq_work);
-    mutex_lock(&(dev->isr_lock));
+    mutex_lock(&(dev->isr_lock)); // lock down the mutex
+    WRITE_ONCE(dev->isr_busy, true); // indicate IRQ is busy
     while ((irq_avail = gpio_get_value(dev->nirq_pin)) == 0) // IRQ low
     {
         u8 interrupts[8];
@@ -887,6 +914,7 @@ static void si446x_irq_work_handler(struct work_struct *work)
             len = 0;
         }
     }
+    WRITE_ONCE(dev->isr_busy, false); // indicate ISR not busy
     mutex_unlock(&(dev->isr_lock));
 }
 
@@ -1635,6 +1663,7 @@ static int si446x_probe(struct spi_device *spi)
     dev->open_ctr = 0;                      // init counter 0
     dev->device_avail = false;              // device not available by default
     dev->initd = false;                     // device not initiated by default
+    dev->isr_busy = false;                  // ISR not busy by default
     dev->tx_pk_ctr = 0;                     // initialize tx packet counter to zero
     dev->rx_pk_ctr = 0;                     // initialize rx packet counter to zero
     dev->rx_corrupt_ctr = 0;                // initialize rx corrupt packet counter to zero
