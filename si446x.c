@@ -1034,8 +1034,7 @@ static int si446x_open(struct inode *inod, struct file *filp)
     struct si446x *dev;
     struct cdev *tcdev;
     si446x_info_t info[1];
-    int retval;
-    int open_ctr;
+    int retval, open_ctr;
     tcdev = inod->i_cdev;
     dev = container_of(tcdev, struct si446x, serdev);
     filp->private_data = (void *)dev; // this is what sets this for read/write() to work
