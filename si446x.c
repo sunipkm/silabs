@@ -775,7 +775,9 @@ static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
 	kfree(dout);
 }
 
-// Transmit data packet
+// Transmit data packet, TODO: PACKET_SENT CB to wait till packet has been sent. 
+// Right now, write() loops on tx, which is fine for 1 packet at a time but not 
+// good for large volume transfers that will become CPU heavy
 static int si446x_tx(struct si446x *dev, void *packet, u8 len, u8 channel, si446x_state_t onTxFinish)
 {
 	int retcode;
@@ -941,28 +943,20 @@ static void si446x_irq_work_handler(struct work_struct *work)
 		// Read data in
 		if (read_rx_fifo)
 		{
-			int head, tail;
+			int head, tail, remainder, seq_len;
 			u8 buff[SI446X_MAX_PACKET_LEN];
 			memset(buff, 0x0, SI446X_MAX_PACKET_LEN);
 			si446x_internal_read(dev, buff, len);
 			head = READ_ONCE(dev->rxbuf->head);
 			tail = READ_ONCE(dev->rxbuf->tail);
-			if (CIRC_SPACE(head, READ_ONCE(dev->rxbuf->tail), dev->rxbuf_len) >= len)
-			{
-				int remainder, seq_len;
-				WRITE_ONCE(dev->rxbuf->head, (head + len) & (dev->rxbuf_len - 1));
-				remainder = len % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1);
-				seq_len = len - remainder;
-				/* Write the block making sure to wrap around the end of the buffer */
-				memcpy(dev->rxbuf->buf + head, buff, remainder);
-				memcpy(dev->rxbuf->buf, buff + remainder, seq_len);
-				WRITE_ONCE(dev->data_available, true);
-				wake_up_interruptible(&(dev->rxq));
-			}
-			else
-			{
-				printk(KERN_ERR DRV_NAME "Error writing data, RX buffer full");
-			}
+			WRITE_ONCE(dev->rxbuf->head, (head + len) & (dev->rxbuf_len - 1));
+			remainder = len % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1);
+			seq_len = len - remainder;
+			/* Write the block making sure to wrap around the end of the buffer */
+			memcpy(dev->rxbuf->buf + head, buff, remainder);
+			memcpy(dev->rxbuf->buf, buff + remainder, seq_len);
+			WRITE_ONCE(dev->data_available, true);
+			wake_up_interruptible(&(dev->rxq));
 			read_rx_fifo = false;
 			len = 0;
 		}
@@ -1031,17 +1025,16 @@ nonblock:
 		out_count = byte_count;
 		WRITE_ONCE(dev->data_available, false);
 	}
-	else // should not trigger
+	else // triggers if head == tail or data not available
 	{
-		WRITE_ONCE(dev->data_available, false);
 		goto ret;
 	}
-	WRITE_ONCE(dev->rxbuf->tail, (tail + out_count) & (dev->rxbuf_len - 1));     // update position of head
 	remainder = out_count % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1); // number of bytes to read till end of buffer
 	seq_len = out_count - remainder;					     // number of bytes to read after wrap-around (if any)
 	/* Write the block making sure to wrap around the end of the buffer */
-	out_count -= copy_to_user(buf, dev->rxbuf->buf + tail, remainder);    // read from tail
-	out_count -= copy_to_user(buf + remainder, dev->rxbuf->buf, seq_len); // wrap around
+	out_count -= copy_to_user(buf, dev->rxbuf->buf + tail, remainder);	 // read from tail
+	out_count -= copy_to_user(buf + remainder, dev->rxbuf->buf, seq_len);	 // wrap around
+	WRITE_ONCE(dev->rxbuf->tail, (tail + out_count) & (dev->rxbuf_len - 1)); // update position of tail
 	return out_count;
 ret:
 	return 0;
