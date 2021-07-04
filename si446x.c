@@ -41,7 +41,7 @@
 
 static int si446x_buffer_len = 16;
 module_param(si446x_buffer_len, int, S_IRUSR | S_IWUSR);
-MODULE_PARM_DESC(si446x_buffer_len, "RX buffer length. Default: 16 units (of 128 Bytes), minimum 128 bytes (1 unit), maximum 16 KiB (128 units)");
+MODULE_PARM_DESC(si446x_buffer_len, "RX buffer length. Default: 16 units (of 128 Bytes), minimum 2 KiB (16 unit), maximum 16 KiB (128 units)");
 
 #define DRV_NAME "si446x"
 #define DRV_VERSION "1.0b"
@@ -954,7 +954,7 @@ static void si446x_irq_work_handler(struct work_struct *work)
 			/* Write the block making sure to wrap around the end of the buffer */
 			memcpy(dev->rxbuf->buf + head, buff, remainder);
 			memcpy(dev->rxbuf->buf, buff + remainder, seq_len);
-			// TODO: take care of the case where we wrap around to head = tail = 0
+			// TODO: take care of the case where we wrap around to head == tail, because head should not equal to tail after writing as buffer is larger than 1 RX unit
 			WRITE_ONCE(dev->rxbuf->head, (head + len) & (dev->rxbuf_len - 1));
 			WRITE_ONCE(dev->data_available, true);
 			wake_up_interruptible(&(dev->rxq));
