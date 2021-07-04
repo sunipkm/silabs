@@ -3,16 +3,16 @@
 #
 
 menuconfig SILABS_CHAR_DRIVERS
-	bool "SiLabs Char Drivers"
+	bool "SiLabs UHF Transceiver Drivers"
 	help
-	  SiLab's 446x Modem Interface
+	  SiLab's Si446x Modem Char Interface
 
 if SILABS_CHAR_DRIVERS
 
 config SI446X_DEV
 	bool "Si446x Driver"
-        default y
+        default m
         help
-          Driver for serial communication with Si446x radio.
+          Driver for communication using Si446x transceiver.
 
 endif
