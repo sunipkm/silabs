@@ -949,12 +949,12 @@ static void si446x_irq_work_handler(struct work_struct *work)
 			si446x_internal_read(dev, buff, len);
 			head = READ_ONCE(dev->rxbuf->head);
 			tail = READ_ONCE(dev->rxbuf->tail);
-			WRITE_ONCE(dev->rxbuf->head, (head + len) & (dev->rxbuf_len - 1));
 			remainder = len % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1);
 			seq_len = len - remainder;
 			/* Write the block making sure to wrap around the end of the buffer */
 			memcpy(dev->rxbuf->buf + head, buff, remainder);
 			memcpy(dev->rxbuf->buf, buff + remainder, seq_len);
+			WRITE_ONCE(dev->rxbuf->head, (head + len) & (dev->rxbuf_len - 1));
 			WRITE_ONCE(dev->data_available, true);
 			wake_up_interruptible(&(dev->rxq));
 			read_rx_fifo = false;
@@ -1025,7 +1025,7 @@ nonblock:
 		out_count = byte_count;
 		WRITE_ONCE(dev->data_available, false);
 	}
-	else // triggers if head == tail or data not available
+	else // triggers if head == tail, could mean empty or full. TODO: Fixit
 	{
 		goto ret;
 	}
