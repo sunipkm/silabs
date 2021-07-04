@@ -954,6 +954,7 @@ static void si446x_irq_work_handler(struct work_struct *work)
 			/* Write the block making sure to wrap around the end of the buffer */
 			memcpy(dev->rxbuf->buf + head, buff, remainder);
 			memcpy(dev->rxbuf->buf, buff + remainder, seq_len);
+			// TODO: take care of the case where we wrap around to head = tail = 0
 			WRITE_ONCE(dev->rxbuf->head, (head + len) & (dev->rxbuf_len - 1));
 			WRITE_ONCE(dev->data_available, true);
 			wake_up_interruptible(&(dev->rxq));
