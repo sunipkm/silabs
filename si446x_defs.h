@@ -2,7 +2,7 @@
 /**
  * @file si446x_defs.h
  * @author Sunip K. Mukherjee (sunipkmukherjee@gmail.com)
- * @brief 
+ * @brief Si446x Radio Definitions
  * @version 1.0a
  * @date 2021-07-04
  * 

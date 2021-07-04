@@ -2,7 +2,7 @@
 /**
  * @file si446x_config.h
  * @author Sunip K. Mukherjee (sunipkmukherjee@gmail.com)
- * @brief 
+ * @brief Si446x Radio Configurations
  * @version 1.0a
  * @date 2021-07-04
  * 

@@ -2,7 +2,7 @@
 /**
  * @file si446x.c
  * @author Sunip K. Mukherjee (sunipkmukherjee@gmail.com)
- * @brief 
+ * @brief Si446x SPI Driver Implementation
  * @version 1.0a
  * @date 2021-06-13
  * 
