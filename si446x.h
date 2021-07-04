@@ -11,18 +11,22 @@
  */
 #ifndef _SI446X_H_
 #define _SI446X_H_
-#ifndef __KERNEL__
+#ifndef __KERNEL__ // userspace
+
 #include <stdint.h>
 typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
-#else
+
+#else // kernel
+
 #include <linux/kernel.h>
 #include <linux/types.h>
-#endif
 
 #ifndef DRIVER_GPL2 // if GPL2 driver is not needed, since WDS generated config is proprietary
 #include "radio_config.h"
+#endif
+
 #endif
 
 #define SI446X_MAX_PACKET_LEN 0x80 ///< Maximum packet length
