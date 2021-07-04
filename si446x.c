@@ -81,9 +81,9 @@ struct si446x
 	int sdn_pin;		      // sdn pin
 	int nirq_pin;		      // IRQ pin
 	int cs_pin;		      // chip select gpio
-	u32 tx_pk_ctr;		      // stat for tx packets
-	u32 rx_pk_ctr;		      // stat for rx packets
-	u32 rx_corrupt_ctr;	      // stat for corrupt rx packets
+	int tx_pk_ctr;		      // stat for tx packets
+	int rx_pk_ctr;		      // stat for rx packets
+	int rx_corrupt_ctr;	      // stat for corrupt rx packets
 	bool device_avail;	      // Device available flag
 	unsigned int isr_state;	      // ISR lock state
 	struct mutex isr_lock;	      // mutex lock to prevent ISR from running
@@ -131,6 +131,16 @@ struct si446x
 	 * 
 	 */
 	bool sleep_on_invalid;
+	/**
+	 * @brief WUT timeout counter. Incremented at WUT interrupt. Does not trigger POLL.
+	 * 
+	 */
+	int wut_counter;
+	/**
+	 * @brief Low battery indicator. Cleared by the ioctl call. Does not trigger POLL.
+	 * 
+	 */
+	bool lowbatt;
 };
 
 static inline int interrupt_off(struct si446x *dev)
@@ -192,14 +202,14 @@ void microsleep(int us)
 	{                 \
 		(void)x;  \
 	}
-#define si446x_wut_cb(x) \
-	{                \
-		(void)x; \
-	}
-#define si446x_lowbatt_cb(x) \
-	{                    \
-		(void)x;     \
-	}
+void si446x_wut_cb(struct si446x *dev)
+{
+	dev->wut_counter++;
+}
+void si446x_lowbatt_cb(struct si446x *dev)
+{
+	WRITE_ONCE(dev->lowbatt, true);
+}
 #else
 void si446x_timeout_cb(struct si446x *dev)
 {
@@ -215,10 +225,12 @@ void si446x_sent_cb(struct si446x *dev)
 }
 void si446x_wut_cb(struct si446x *dev)
 {
+	dev->wut_counter++;
 	printk(KERN_INFO DRV_NAME ": WUT timeout occurred\n");
 }
 void si446x_lowbatt_cb(struct si446x *dev)
 {
+	WRITE_ONCE(dev->lowbatt, true);
 	printk(KERN_INFO DRV_NAME ": Low battery reported\n");
 }
 #endif
@@ -867,18 +879,18 @@ static void si446x_irq_work_handler(struct work_struct *work)
 		sleep_on_invalid = READ_ONCE(dev->sleep_on_invalid);
 		if (sleep_on_invalid)
 		{
-#define SI446X_INVALIDSYNC_CBS _BV(5)
+#define SI446X_INVALIDSYNC_CB _BV(5)
 			// Valid PREAMBLE and SYNC, packet data now begins
 			// Enable invalid sync callback
 			if (interrupts[4] & (1 << SI446X_SYNC_DETECT_PEND))
 			{
-				si446x_setup_callback(dev, SI446X_INVALIDSYNC_CBS, 1); // Enable INVALID_SYNC when a new packet starts, sometimes a corrupted packet will mess the radio up
+				si446x_setup_callback(dev, SI446X_INVALIDSYNC_CB, 1); // Enable INVALID_SYNC when a new packet starts, sometimes a corrupted packet will mess the radio up
 			}
 
 			// Disable INVALID_SYNC callback to service the issue
 			if ((interrupts[4] & (1 << SI446X_INVALID_SYNC_PEND)) || (interrupts[2] & ((1 << SI446X_PACKET_SENT_PEND) | (1 << SI446X_CRC_ERROR_PEND))))
 			{
-				si446x_setup_callback(dev, SI446X_INVALIDSYNC_CBS, 0); // disble INVALID_SYNC if one is detected
+				si446x_setup_callback(dev, SI446X_INVALIDSYNC_CB, 0); // disble INVALID_SYNC if one is detected
 			}
 
 			// INVALID_SYNC detected, sometimes the radio gets messed up in this state and requires a RX restart
@@ -887,7 +899,7 @@ static void si446x_irq_work_handler(struct work_struct *work)
 			{
 				si446x_set_state(dev, SI446X_STATE_SLEEP);
 			}
-#undef SI446X_INVALIDSYNC_CBS
+#undef SI446X_INVALIDSYNC_CB
 		}
 		// valid packet
 		if (interrupts[2] & (1 << SI446X_PACKET_RX_PEND))
@@ -905,10 +917,9 @@ static void si446x_irq_work_handler(struct work_struct *work)
 		if (interrupts[2] & (1 << SI446X_CRC_ERROR_PEND))
 		{
 			dev->rx_corrupt_ctr++;
-			if (sleep_on_invalid)
+			if (sleep_on_invalid && (si446x_get_state(dev) == SI446X_STATE_SPI_ACTIVE)) // si446x_get_state will cause the device to get out of sleep mode and into SPI active mode
 			{
-				if (si446x_get_state(dev) == SI446X_STATE_SPI_ACTIVE) // si446x_get_state will cause the device to get out of sleep mode and into SPI active mode
-					si446x_set_state(dev, dev->SI446X_IDLE_MODE);
+				si446x_set_state(dev, dev->SI446X_IDLE_MODE);
 			}
 			si446x_rxinvalid_cb(dev, si446x_get_latched_rssi(dev));
 		}
@@ -938,12 +949,13 @@ static void si446x_irq_work_handler(struct work_struct *work)
 			tail = READ_ONCE(dev->rxbuf->tail);
 			if (CIRC_SPACE(head, READ_ONCE(dev->rxbuf->tail), dev->rxbuf_len) >= len)
 			{
-				int remainder = len % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1);
-				int seq_len = len - remainder;
+				int remainder, seq_len;
+				WRITE_ONCE(dev->rxbuf->head, (head + len) & (dev->rxbuf_len - 1));
+				remainder = len % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1);
+				seq_len = len - remainder;
 				/* Write the block making sure to wrap around the end of the buffer */
 				memcpy(dev->rxbuf->buf + head, buff, remainder);
 				memcpy(dev->rxbuf->buf, buff + remainder, seq_len);
-				WRITE_ONCE(dev->rxbuf->head, (head + len) & (dev->rxbuf_len - 1));
 				WRITE_ONCE(dev->data_available, true);
 				wake_up_interruptible(&(dev->rxq));
 			}
@@ -979,13 +991,13 @@ static ssize_t si446x_read(struct file *filp, char __user *buf, size_t count, lo
 	int head, tail, byte_count, out_count, remainder, seq_len;
 	bool avail;
 	dev = (struct si446x *)(filp->private_data);
-	if (!dev->device_avail) // device is not available
+	if (!dev->device_avail)
 	{
-		return -EHOSTDOWN;
+		return -ENODEV;
 	}
-	if (!dev->initd) // device not initialized
+	else if (!dev->initd)
 	{
-		return -EINVAL;
+		return -EIO;
 	}
 	if ((filp->f_flags & O_ACCMODE) == O_WRONLY) // device not opened as write only
 	{
@@ -1024,12 +1036,12 @@ nonblock:
 		WRITE_ONCE(dev->data_available, false);
 		goto ret;
 	}
+	WRITE_ONCE(dev->rxbuf->tail, (tail + out_count) & (dev->rxbuf_len - 1));     // update position of head
 	remainder = out_count % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1); // number of bytes to read till end of buffer
 	seq_len = out_count - remainder;					     // number of bytes to read after wrap-around (if any)
 	/* Write the block making sure to wrap around the end of the buffer */
-	out_count -= copy_to_user(buf, dev->rxbuf->buf + tail, remainder);	 // read from tail
-	out_count -= copy_to_user(buf + remainder, dev->rxbuf->buf, seq_len);	 // wrap around
-	WRITE_ONCE(dev->rxbuf->tail, (tail + out_count) & (dev->rxbuf_len - 1)); // update position of head
+	out_count -= copy_to_user(buf, dev->rxbuf->buf + tail, remainder);    // read from tail
+	out_count -= copy_to_user(buf + remainder, dev->rxbuf->buf, seq_len); // wrap around
 	return out_count;
 ret:
 	return 0;
@@ -1045,11 +1057,11 @@ static ssize_t si446x_write(struct file *filp, const char __user *buf, size_t co
 	astate = READ_ONCE(dev->on_tx_state);
 	if (!dev->device_avail)
 	{
-		return -EHOSTDOWN;
+		return -ENODEV;
 	}
-	if (!dev->initd)
+	else if (!dev->initd)
 	{
-		return -EINVAL;
+		return -EIO;
 	}
 	if ((filp->f_flags & O_ACCMODE) == O_RDONLY)
 	{
@@ -1124,6 +1136,8 @@ static int si446x_open(struct inode *inod, struct file *filp)
 	if (open_ctr == 1) // reset device on very first open
 	{
 		printk(KERN_DEBUG DRV_NAME ": First open\n");
+		dev->wut_counter = 0;
+		dev->lowbatt = false;
 		dev->initd = false;
 		si446x_reset_device(dev);
 		printk(KERN_DEBUG DRV_NAME ": Reset device\n");
@@ -1183,18 +1197,17 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	ptr = (void __user *)arg;
 	if (!dev->device_avail)
 	{
-		return -EHOSTDOWN;
+		return -ENODEV;
+	}
+	else if ((!dev->initd) && (cmd < SI446X_INIT))
+	{
+		return -EIO;
 	}
 	switch (cmd)
 	{
 	case SI446X_SET_STATE:
 	{
 		int st;
-		if (!dev->initd)
-		{
-			retval = -EACCES;
-			break;
-		}
 		if ((st < 0) || (st > SI446X_STATE_RX))
 		{
 			retval = -EINVAL;
@@ -1209,11 +1222,6 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_SET_ONTX_STATE:
 	{
 		int st;
-		if (!dev->initd)
-		{
-			retval = -EACCES;
-			break;
-		}
 		retval = -copy_from_user_nofault(&st, ptr, sizeof(int));
 		if ((st < 0) || (st > SI446X_STATE_RX))
 		{
@@ -1226,11 +1234,6 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_SET_ONRX_STATE:
 	{
 		int st;
-		if (!dev->initd)
-		{
-			retval = -EACCES;
-			break;
-		}
 		if ((st < 0) || (st > SI446X_STATE_RX))
 		{
 			retval = -EINVAL;
@@ -1252,11 +1255,6 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_GET_STATE:
 	{
 		int st;
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		st = si446x_get_state(dev);
 		retval = -copy_to_user_nofault(ptr, &st, sizeof(int));
 		printk(KERN_DEBUG DRV_NAME "ioctl get state %d\n", st);
@@ -1264,22 +1262,12 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	}
 	case SI446X_GET_LATCHED_RSSI:
 	{
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		retval = -copy_to_user_nofault(ptr, &(dev->rssi), sizeof(s16));
 		break;
 	}
 	case SI446X_GET_RSSI:
 	{
 		s16 rssi;
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		rssi = si446x_get_rssi(dev);
 		retval = -copy_to_user_nofault(ptr, &rssi, sizeof(s16));
 		break;
@@ -1287,22 +1275,12 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_GET_INFO:
 	{
 		si446x_info_t info[1];
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		si446x_get_info(dev, info);
 		retval = -copy_to_user_nofault(ptr, info, sizeof(si446x_info_t));
 		break;
 	}
 	case SI446X_DISABLE_WUT:
 	{
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		si446x_disable_wut(dev);
 		retval = 1;
 		break;
@@ -1310,11 +1288,6 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_SETUP_WUT:
 	{
 		struct SI446X_WUT_CONFIG conf[1];
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		retval = -copy_from_user_nofault(conf, ptr, sizeof(struct SI446X_WUT_CONFIG));
 		if (!retval)
 			si446x_setup_wut(dev, conf->r, conf->m, conf->ldc, conf->config);
@@ -1323,11 +1296,6 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_GET_TX_PWR:
 	{
 		u8 pwr;
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		pwr = si446x_get_tx_power(dev);
 		retval = -copy_to_user_nofault(ptr, &pwr, sizeof(u8));
 		break;
@@ -1335,11 +1303,6 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_SET_TX_PWR:
 	{
 		u8 pwr;
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		retval = -copy_from_user_nofault(&pwr, ptr, sizeof(u8));
 		si446x_set_tx_power(dev, pwr);
 		break;
@@ -1354,11 +1317,6 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_RD_GPIO:
 	{
 		u8 st;
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		st = si446x_read_gpio(dev);
 		retval = -copy_to_user_nofault(ptr, &st, sizeof(s8));
 		break;
@@ -1366,11 +1324,6 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_WR_GPIO:
 	{
 		struct SI446X_GPIO_CONFIG conf[1];
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		retval = -copy_from_user_nofault(conf, ptr, sizeof(struct SI446X_GPIO_CONFIG));
 		si446x_write_gpio(dev, conf->pin, conf->val);
 		break;
@@ -1378,11 +1331,6 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_SET_LOW_BATT:
 	{
 		u8 volt;
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		retval = -copy_from_user_nofault(&volt, ptr, sizeof(u8));
 		si446x_set_low_batt(dev, volt);
 		break;
@@ -1390,11 +1338,6 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_ADC_BATT:
 	{
 		u16 batt;
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		batt = si446x_adc_battery(dev);
 		retval = -copy_to_user_nofault(ptr, &batt, sizeof(u16));
 		break;
@@ -1402,11 +1345,6 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_ADC_GPIO:
 	{
 		struct SI446X_ADC_GPIO_MEM gp[1];
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		retval = -copy_from_user_nofault(gp, ptr, sizeof(struct SI446X_ADC_GPIO_MEM));
 		if (retval)
 		{
@@ -1418,11 +1356,6 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	}
 	case SI446X_SLEEP:
 	{
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		retval = si446x_sleep(dev);
 		if (!retval)
 		{
@@ -1433,11 +1366,6 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_ADC_CONF:
 	{
 		struct SI446X_ADC_CONFIG conf[1];
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		retval = -copy_from_user_nofault(conf, ptr, sizeof(struct SI446X_ADC_CONFIG));
 		if (retval)
 		{
@@ -1447,13 +1375,19 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		retval = -copy_to_user_nofault(ptr, conf, sizeof(struct SI446X_ADC_CONFIG));
 		break;
 	}
+	case SI446X_RD_WUT_COUNTER:
+	{
+		retval = dev->wut_counter;
+		break;
+	}
+	case SI446X_RD_LOWBATT:
+	{
+		retval = READ_ONCE(dev->lowbatt);
+		WRITE_ONCE(dev->lowbatt, false); // clear
+		break;
+	}
 	case SI446X_RD_RX_BUF_SZ:
 	{
-		if (!dev->initd)
-		{
-			retval = -EINVAL;
-			break;
-		}
 		retval = -copy_to_user_nofault(ptr, &(dev->rxbuf_len), sizeof(int));
 		break;
 	}

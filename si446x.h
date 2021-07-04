@@ -129,6 +129,7 @@ typedef enum
 
 enum SI446X_IOCTL
 {
+	/* The following calls require the device to be initialized */
 	SI446X_SET_STATE = 0xa,		 // si446x_state_t state
 	SI446X_GET_STATE,		 // si446x_state_t state
 	SI446X_GET_LATCHED_RSSI,	 // int16_t rssi
@@ -147,14 +148,17 @@ enum SI446X_IOCTL
 	SI446X_SLEEP,			 // void, returns 0 on failure, 1 on success
 	SI446X_ADC_CONF,		 // struct SI446X_ADC_CONFIG
 	SI446X_RD_RX_BUF_SZ,		 // void, Size of RX buffer
-	SI446X_INIT,			 // NULL for default config, or pointer to struct SI446X_INIT_PROPS
-	SI446X_DEBUG_TX_PACKETS,	 // void, Number of packets sent
-	SI446X_DEBUG_RX_PACKETS,	 // void, Number of packets received
-	SI446X_DEBUG_RX_CORRUPT_PACKETS, // void, Number of corrupt packets
 	SI446X_SET_ONTX_STATE,		 // State the device goes to after TX, default: Sleep
 	SI446X_SET_ONRX_STATE,		 // State the device goes to after RX, default: Sleep
 	SI446X_GET_ONTX_STATE,		 // State the device goes to after TX (return value)
 	SI446X_GET_ONRX_STATE,		 // State the device goes to after RX (return value)
+	/* The following calls do not require the device to be initialized */
+	SI446X_INIT,			 // NULL for default config (if not GPL2 driver), or pointer to struct SI446X_INIT_PROPS
+	SI446X_DEBUG_TX_PACKETS,	 // void, Number of packets sent
+	SI446X_DEBUG_RX_PACKETS,	 // void, Number of packets received
+	SI446X_DEBUG_RX_CORRUPT_PACKETS, // void, Number of corrupt packets
+	SI446X_RD_WUT_COUNTER,		 // WUT timeout counter (return value)
+	SI446X_RD_LOWBATT		 // Low battery indicator (return value, clears on ioctl)
 };
 
 struct SI446X_WUT_CONFIG
