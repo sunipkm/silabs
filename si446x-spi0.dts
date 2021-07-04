@@ -1,6 +1,6 @@
 // Overlay for the SiLabs Si446X Controller - SPI0
-// Interrupt pin: 11
-// SDN Pin: 13
+// Default Interrupt Pin: 17
+// Default SDN Pin: 27
 /dts-v1/;
 /plugin/;
 
@@ -35,7 +35,7 @@
         target = <&gpio>;
         __overlay__ {
             uhf0_pins: uhf0_pins {
-                brcm,pins = <17 27>; // gpio 11, gpio 13
+                brcm,pins = <17 27>;
                 brcm,function = <0 1>; // in, out
                 brcm,pull = <2 0>; // high, none
             };
