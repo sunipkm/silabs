@@ -74,7 +74,7 @@ static struct class *si446x_class;
 
 struct si446x
 {
-	struct cdev serdev;
+	struct cdev serdev;	      // char device
 	struct spi_device *spibus;    // spi bus
 	struct work_struct irq_work;  // IRQ handler
 	struct work_struct init_work; // INIT handler
@@ -103,33 +103,33 @@ struct si446x
 	si446x_state_t on_tx_state;   // State after TX
 	si446x_state_t on_rx_state;   // State after RX
 	/**
-     * @brief Mode to enter when radio is idle.
-     * The radio is put into idle mode when new data is being loaded for transmission,
-     * just before starting receiver and after receiving a packet. This option affects
-     * response time to TX/RX mode and power consumption.
-     * 
-     * NOTE: After receiving an invalid packet, the radio can be put into sleep mode
-     * instead of the option chosen here, depending on the SI446X_SLEEP_ON_INVALID option.
-     * Putting the radio into sleep mode temporarily fixes an issue with INVALID_SYNC
-     * causing the radio to lock up.
-     * 
-     * SI446X_STATE_SPI_ACTIVE:
-     * Response time: 340 us
-     * Current consumption: 1.35 mA
-     * 
-     * SI446X_STATE_READY:
-     * Response time: 100 us
-     * Current consumption: 1.8 mA
-     * 
-     */
+	 * @brief Mode to enter when radio is idle.
+	 * The radio is put into idle mode when new data is being loaded for transmission,
+	 * just before starting receiver and after receiving a packet. This option affects
+	 * response time to TX/RX mode and power consumption.
+	 * 
+	 * NOTE: After receiving an invalid packet, the radio can be put into sleep mode
+	 * instead of the option chosen here, depending on the SI446X_SLEEP_ON_INVALID option.
+	 * Putting the radio into sleep mode temporarily fixes an issue with INVALID_SYNC
+	 * causing the radio to lock up.
+	 * 
+	 * SI446X_STATE_SPI_ACTIVE:
+	 * Response time: 340 us
+	 * Current consumption: 1.35 mA 
+	 * 
+	 * SI446X_STATE_READY:
+	 * Response time: 100 us
+	 * Current consumption: 1.8 mA
+	 * 
+     	 */
 	si446x_state_t SI446X_IDLE_MODE;
 	/**
-     * @brief Determines whether to go into sleep mode for an invalid packet during execution
-     * of the interrupt handler. This option is disabled by default, and can be manipulated by
-     * performing an ioctl call with SI446X_SLEEP_ON_INVALID command, and an int as a parameter.
-     * If the integer is NULL or 0, sleep_on_invalid is false; else it is set to true.
-     * 
-     */
+	 * @brief 
+	 * of the interrupt handler. This option is disabled by default, and can be manipulated by
+	 * performing an ioctl call with SI446X_SLEEP_ON_INVALID command, and an int as a parameter.
+	 * If the integer is NULL or 0, sleep_on_invalid is false; else it is set to true.
+	 * 
+	 */
 	bool sleep_on_invalid;
 };
 
