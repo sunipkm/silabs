@@ -23,7 +23,7 @@ typedef uint32_t u32;
 #include <linux/kernel.h>
 #include <linux/types.h>
 
-#ifndef DRIVER_GPL2 // if GPL2 driver is not needed, since WDS generated config is proprietary
+#ifndef SI446X_DRIVER_GPL2 // if GPL2 driver is not needed, since WDS generated config is proprietary
 #include "radio_config.h"
 #endif
 

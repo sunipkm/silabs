@@ -32,7 +32,7 @@
 #include <linux/wait.h>
 #include <linux/poll.h>
 
-#define DRIVER_GPL2
+#define SI446X_DRIVER_GPL2
 
 #include "si446x_kern.h"
 #include "si446x_config.h"
@@ -1460,12 +1460,12 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_INIT:
 	{
 		struct SI446X_INIT_PROPS init_props[1];
-#ifndef DRIVER_GPL2
+#ifndef SI446X_DRIVER_GPL2
 		u8 config[] = RADIO_CONFIGURATION_DATA_ARRAY;
 #endif
 		si446x_reset_device(dev);
 		memset(init_props, 0x0, sizeof(struct SI446X_INIT_PROPS));
-#ifndef DRIVER_GPL2
+#ifndef SI446X_DRIVER_GPL2
 		if (arg == 0)
 		{
 			printk(KERN_DEBUG DRV_NAME ": Using default config\n");
@@ -1501,14 +1501,14 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			retval = -ENOMEM;
 			break;
 		}
-#ifndef DRIVER_GPL2
+#ifndef SI446X_DRIVER_GPL2
 		if (!arg)
 		{
 			memcpy(dev->config, config, dev->config_len);
 		}
 		else
 #endif
-		// at this point, arg != NULL if not DRIVER_GPL2
+		// at this point, arg != NULL if not SI446X_DRIVER_GPL2
 		{
 			retval = copy_from_user(dev->config, (void *__user)init_props->config, dev->config_len);
 		}
