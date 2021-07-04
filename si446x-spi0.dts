@@ -1,8 +1,8 @@
 // Overlay for the SiLabs Si446X Controller - SPI0
- // Interrupt pin: 11
- // SDN Pin: 13
- /dts-v1/;
- /plugin/;
+// Interrupt pin: 11
+// SDN Pin: 13
+/dts-v1/;
+/plugin/;
 
    / {
     compatible = "brcm,bcm2708";

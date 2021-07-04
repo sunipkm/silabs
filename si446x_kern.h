@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /**
  * @file si446x_kern.h
  * @author Sunip K. Mukherjee (sunipkmukherjee@gmail.com)
