@@ -943,19 +943,27 @@ static void si446x_irq_work_handler(struct work_struct *work)
 		// Read data in
 		if (read_rx_fifo)
 		{
-			int head, tail, remainder, seq_len;
+			int head, tail, new_head, remainder, seq_len;
 			u8 buff[SI446X_MAX_PACKET_LEN];
 			memset(buff, 0x0, SI446X_MAX_PACKET_LEN);
 			si446x_internal_read(dev, buff, len);
 			head = READ_ONCE(dev->rxbuf->head);
 			tail = READ_ONCE(dev->rxbuf->tail);
+			new_head = (head + len) & (dev->rxbuf_len - 1);
+			// Takes care of the case where we wrap around to head >= tail, because head should not equal to tail after writing as buffer is larger than 1 RX unit
+			if (new_head < ((tail + len) & (dev->rxbuf_len - 1))) // wrap around
+			{
+				head = 0;
+				tail = 0;
+				new_head = (head + len) & (dev->rxbuf_len - 1);
+				WRITE_ONCE(dev->rxbuf->tail, 0);
+			}
 			remainder = len % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1);
 			seq_len = len - remainder;
 			/* Write the block making sure to wrap around the end of the buffer */
 			memcpy(dev->rxbuf->buf + head, buff, remainder);
 			memcpy(dev->rxbuf->buf, buff + remainder, seq_len);
-			// TODO: take care of the case where we wrap around to head == tail, because head should not equal to tail after writing as buffer is larger than 1 RX unit
-			WRITE_ONCE(dev->rxbuf->head, (head + len) & (dev->rxbuf_len - 1));
+			WRITE_ONCE(dev->rxbuf->head, new_head);
 			WRITE_ONCE(dev->data_available, true);
 			wake_up_interruptible(&(dev->rxq));
 			read_rx_fifo = false;
