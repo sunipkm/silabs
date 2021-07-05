@@ -45,7 +45,7 @@ MODULE_PARM_DESC(si446x_buffer_len, "RX buffer length. Default: 16 units (of 128
 
 #define DRV_NAME "si446x"
 #define DRV_VERSION "1.0b"
-#define DEVICE_NAME "ttyUHF"
+#define DEVICE_NAME "siUHF"
 
 // Max devices to be probed by this driver
 #ifndef SI446X_MAX_DEVICES
