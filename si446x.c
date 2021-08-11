@@ -1038,7 +1038,7 @@ nonblock:
 	{
 		goto ret;
 	}
-	remainder = out_count % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1); // number of bytes to read till end of buffer
+	remainder = out_count % (CIRC_CNT_TO_END(head, tail, dev->rxbuf_len) + 1); // number of bytes to read till end of buffer
 	seq_len = out_count - remainder;					     // number of bytes to read after wrap-around (if any)
 	/* Write the block making sure to wrap around the end of the buffer */
 	out_count -= copy_to_user(buf, dev->rxbuf->buf + tail, remainder);	 // read from tail
