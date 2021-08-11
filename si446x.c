@@ -909,6 +909,7 @@ static void si446x_irq_work_handler(struct work_struct *work)
 		{
 			len = 0;
 			si446x_internal_read(dev, &len, 1);
+			printk(KERN_INFO DRV_NAME ": Valid packet len %d\n", (int) len);
 			dev->rssi = si446x_get_latched_rssi(dev);
 			if ((len != 0xff) && (len != 0))
 			{
@@ -924,6 +925,7 @@ static void si446x_irq_work_handler(struct work_struct *work)
 			{
 				si446x_set_state(dev, dev->SI446X_IDLE_MODE);
 			}
+			printk(KERN_INFO DRV_NAME ": Corrupted packet\n");
 			si446x_rxinvalid_cb(dev, si446x_get_latched_rssi(dev));
 		}
 		// packet sent
