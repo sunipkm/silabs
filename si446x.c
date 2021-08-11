@@ -1210,12 +1210,12 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_SET_STATE:
 	{
 		int st;
+		retval = -copy_from_user_nofault(&st, ptr, sizeof(int));
 		if ((st < 0) || (st > SI446X_STATE_RX))
 		{
 			retval = -EINVAL;
 			break;
 		}
-		retval = -copy_from_user_nofault(&st, ptr, sizeof(int));
 		if (!retval)
 			si446x_set_state(dev, st);
 		printk(KERN_DEBUG DRV_NAME "ioctl set state %d\n", st);
@@ -1236,6 +1236,7 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SI446X_SET_ONRX_STATE:
 	{
 		int st;
+		retval = -copy_from_user_nofault(&st, ptr, sizeof(int));
 		if ((st < 0) || (st > SI446X_STATE_RX))
 		{
 			retval = -EINVAL;
