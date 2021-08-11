@@ -39,17 +39,17 @@ typedef uint32_t u32;
 typedef struct
 {
 	u8 chip_rev;   ///< Chip revision
-	u16 part;      ///< Part ID
+	u16 part;	   ///< Part ID
 	u8 part_build; ///< Part build
-	u16 id;	       ///< ID
+	u16 id;		   ///< ID
 	u8 customer;   ///< Customer
-	u8 rom_id;     ///< ROM ID (3 = revB1B, 6 = revC2A)
+	u8 rom_id;	   ///< ROM ID (3 = revB1B, 6 = revC2A)
 
 	u8 rev_external; ///< Revision external
 	u8 rev_branch;	 ///< Revision branch
 	u8 rev_internal; ///< Revision internal
-	u16 patch;	 ///< Patch
-	u8 func;	 ///< Function
+	u16 patch;		 ///< Patch
+	u8 func;		 ///< Function
 } si446x_info_t;
 
 /**
@@ -74,7 +74,7 @@ typedef enum
 	SI446X_STATE_SLEEP = 0x01, ///< This will never be returned since SPI activity will wake the radio into ::SI446X_STATE_SPI_ACTIVE
 	SI446X_STATE_SPI_ACTIVE = 0x02,
 	SI446X_STATE_READY = 0x03,
-	SI446X_STATE_READY2 = 0x04,  ///< Will return as ::SI446X_STATE_READY
+	SI446X_STATE_READY2 = 0x04,	 ///< Will return as ::SI446X_STATE_READY
 	SI446X_STATE_TX_TUNE = 0x05, ///< Will return as ::SI446X_STATE_TX
 	SI446X_STATE_RX_TUNE = 0x06, ///< Will return as ::SI446X_STATE_RX
 	SI446X_STATE_TX = 0x07,
@@ -130,9 +130,9 @@ typedef enum
 enum SI446X_IOCTL
 {
 	/* The following calls require the device to be initialized */
-	SI446X_SET_STATE = 0xa,		 // si446x_state_t state
+	SI446X_SET_STATE = 0xa,	 // si446x_state_t state
 	SI446X_GET_STATE,		 // si446x_state_t state
-	SI446X_GET_LATCHED_RSSI,	 // int16_t rssi
+	SI446X_GET_LATCHED_RSSI, // int16_t rssi
 	SI446X_GET_RSSI,		 // int16_t rssi
 	SI446X_GET_INFO,		 // si446x_info_t info
 	SI446X_DISABLE_WUT,		 // void
@@ -142,23 +142,24 @@ enum SI446X_IOCTL
 	SI446X_GET_TEMP,		 // int32_t get temperature
 	SI446X_RD_GPIO,			 // uint8_t gpio state
 	SI446X_WR_GPIO,			 // struct SI446X_GPIO_CONFIG
-	SI446X_SET_LOW_BATT,		 // uint8_t voltage (scale by 1/50, offset by -30)
+	SI446X_SET_LOW_BATT,	 // uint8_t voltage (scale by 1/50, offset by -30)
 	SI446X_ADC_BATT,		 // uint16_t voltage (scale by 75/32)
 	SI446X_ADC_GPIO,		 // struct SI446X_ADC_GPIO_MEM
 	SI446X_SLEEP,			 // void, returns 0 on failure, 1 on success
 	SI446X_ADC_CONF,		 // struct SI446X_ADC_CONFIG
-	SI446X_RD_RX_BUF_SZ,		 // void, Size of RX buffer
-	SI446X_SET_ONTX_STATE,		 // State the device goes to after TX, default: Sleep
-	SI446X_SET_ONRX_STATE,		 // State the device goes to after RX, default: Sleep
-	SI446X_GET_ONTX_STATE,		 // State the device goes to after TX (return value)
-	SI446X_GET_ONRX_STATE,		 // State the device goes to after RX (return value)
+	SI446X_RD_RX_BUF_SZ,	 // void, Size of RX buffer
+	SI446X_SET_ONTX_STATE,	 // State the device goes to after TX, default: Sleep
+	SI446X_SET_ONRX_STATE,	 // State the device goes to after RX, default: Sleep
+	SI446X_GET_ONTX_STATE,	 // State the device goes to after TX (return value)
+	SI446X_GET_ONRX_STATE,	 // State the device goes to after RX (return value)
 	/* The following calls do not require the device to be initialized */
-	SI446X_INIT,			 // NULL for default config (if not GPL2 driver), or pointer to struct SI446X_INIT_PROPS
-	SI446X_DEBUG_TX_PACKETS,	 // void, Number of packets sent
-	SI446X_DEBUG_RX_PACKETS,	 // void, Number of packets received
+	SI446X_INIT,					 // NULL for default config (if not GPL2 driver), or pointer to struct SI446X_INIT_PROPS
+	SI446X_SET_TX_FIFO_LENGTH,		 // Set TX FIFO length, u8
+	SI446X_DEBUG_TX_PACKETS,		 // void, Number of packets sent
+	SI446X_DEBUG_RX_PACKETS,		 // void, Number of packets received
 	SI446X_DEBUG_RX_CORRUPT_PACKETS, // void, Number of corrupt packets
-	SI446X_RD_WUT_COUNTER,		 // WUT timeout counter (return value)
-	SI446X_RD_LOWBATT		 // Low battery indicator (return value, clears on ioctl)
+	SI446X_RD_WUT_COUNTER,			 // WUT timeout counter (return value)
+	SI446X_RD_LOWBATT				 // Low battery indicator (return value, clears on ioctl)
 };
 
 struct SI446X_WUT_CONFIG
@@ -191,7 +192,7 @@ struct SI446X_ADC_CONFIG
 
 struct SI446X_INIT_PROPS
 {
-	u32 len;      // length of config array
+	u32 len;	  // length of config array
 	void *config; // pointer to config array
 };
 
