@@ -951,6 +951,7 @@ static void si446x_irq_work_handler(struct work_struct *work)
 			head = READ_ONCE(dev->rxbuf->head);
 			tail = READ_ONCE(dev->rxbuf->tail);
 			space = CIRC_SPACE(head, READ_ONCE(dev->rxbuf->tail), dev->rxbuf_len);
+			printk(KERN_INFO DRV_NAME ": RX handler: %d bytes received\n", (int) len);
 			if (space < len)
 			{
 				head = 0;
@@ -1639,6 +1640,7 @@ static int si446x_probe(struct spi_device *spi)
 		goto err_main;
 	}
 	dev->fifo_len = 0x80;								// default 128 byte
+	dev->sleep_on_invalid = false;
 	if (!(si446x_buffer_len & (si446x_buffer_len - 1))) // length is not power of 2
 	{
 		// round up to nearest power of 2 (up to 256)

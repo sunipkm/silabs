@@ -155,6 +155,8 @@ enum SI446X_IOCTL
 	/* The following calls do not require the device to be initialized */
 	SI446X_INIT,					 // NULL for default config (if not GPL2 driver), or pointer to struct SI446X_INIT_PROPS
 	SI446X_SET_TX_FIFO_LENGTH,		 // Set TX FIFO length, u8
+	SI446X_GET_SLEEP_ON_INVALID,	 // Get sleep on invalid status (pointer to int)
+	SI446X_SET_SLEEP_ON_INVALID,	 // Set sleep on invalid status (pointer to int)
 	SI446X_DEBUG_TX_PACKETS,		 // void, Number of packets sent
 	SI446X_DEBUG_RX_PACKETS,		 // void, Number of packets received
 	SI446X_DEBUG_RX_CORRUPT_PACKETS, // void, Number of corrupt packets
