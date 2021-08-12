@@ -909,7 +909,7 @@ static void si446x_irq_work_handler(struct work_struct *work)
 		{
 			len = 0;
 			si446x_internal_read(dev, &len, 1);
-			printk(KERN_INFO DRV_NAME ": Valid packet len %d\n", (int) len);
+			printk(KERN_INFO DRV_NAME ": Valid packet len %d\n", (int)len);
 			dev->rssi = si446x_get_latched_rssi(dev);
 			if ((len != 0xff) && (len != 0))
 			{
@@ -921,12 +921,15 @@ static void si446x_irq_work_handler(struct work_struct *work)
 		if (interrupts[2] & (1 << SI446X_CRC_ERROR_PEND))
 		{
 			dev->rx_corrupt_ctr++;
-			if (sleep_on_invalid && (si446x_get_state(dev) == SI446X_STATE_SPI_ACTIVE)) // si446x_get_state will cause the device to get out of sleep mode and into SPI active mode
+			printk(KERN_INFO DRV_NAME ": Corrupted packet\n");
+			si446x_rxinvalid_cb(dev, si446x_get_latched_rssi(dev));
+		}
+		if (interrupts[2] & (1 << SI446X_CRC_ERROR_PEND) && sleep_on_invalid)
+		{
+			if ((si446x_get_state(dev) == SI446X_STATE_SPI_ACTIVE)) // si446x_get_state will cause the device to get out of sleep mode and into SPI active mode
 			{
 				si446x_set_state(dev, dev->SI446X_IDLE_MODE);
 			}
-			printk(KERN_INFO DRV_NAME ": Corrupted packet\n");
-			si446x_rxinvalid_cb(dev, si446x_get_latched_rssi(dev));
 		}
 		// packet sent
 		if (interrupts[2] & (1 << SI446X_PACKET_SENT_PEND))
@@ -953,7 +956,7 @@ static void si446x_irq_work_handler(struct work_struct *work)
 			head = READ_ONCE(dev->rxbuf->head);
 			tail = READ_ONCE(dev->rxbuf->tail);
 			space = CIRC_SPACE(head, READ_ONCE(dev->rxbuf->tail), dev->rxbuf_len);
-			printk(KERN_INFO DRV_NAME ": RX handler: %d bytes received\n", (int) len);
+			printk(KERN_INFO DRV_NAME ": RX handler: %d bytes received\n", (int)len);
 			if (space < len)
 			{
 				head = 0;
@@ -1641,7 +1644,7 @@ static int si446x_probe(struct spi_device *spi)
 		printk(KERN_ERR DRV_NAME ": Error allocating memory for receiver buffer\n");
 		goto err_main;
 	}
-	dev->fifo_len = 0x80;								// default 128 byte
+	dev->fifo_len = 0x80; // default 128 byte
 	dev->sleep_on_invalid = false;
 	if (!(si446x_buffer_len & (si446x_buffer_len - 1))) // length is not power of 2
 	{
