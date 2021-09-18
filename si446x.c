@@ -147,14 +147,15 @@ struct si446x
 static inline int interrupt_off(struct si446x *dev)
 {
 	int isr_state;
-	bool isr_busy;
-	isr_busy = READ_ONCE(dev->isr_busy); // check if ISR is busy first
-	if (!isr_busy)
+	isr_state = READ_ONCE(dev->isr_state);
+	if (isr_state > 0)
 	{
-		isr_state = READ_ONCE(dev->isr_state);
 		WRITE_ONCE(dev->isr_state, isr_state + 1);
-		if (isr_state == 0)
-			mutex_lock(&(dev->isr_lock)); // prevent ISR from running
+	}
+	else if (isr_state == 0) // here we need to acquire the lock
+	{
+		WRITE_ONCE(dev->isr_state, 1);
+		mutex_lock(&(dev->isr_lock));
 	}
 	return 1;
 }
@@ -162,16 +163,15 @@ static inline int interrupt_off(struct si446x *dev)
 static inline int interrupt_on(struct si446x *dev)
 {
 	int isr_state;
-	bool isr_busy;
-	isr_busy = READ_ONCE(dev->isr_busy); // check if ISR is busy first
-	if (!isr_busy)
+	isr_state = READ_ONCE(dev->isr_state);
+	if (isr_state > 1)
 	{
-		isr_state = READ_ONCE(dev->isr_state);
-		if (isr_state > 0)
-			WRITE_ONCE(dev->isr_state, isr_state - 1);
-		isr_state = READ_ONCE(dev->isr_state);
-		if (isr_state == 0)
-			mutex_unlock(&(dev->isr_lock)); // Allow ISR to run
+		WRITE_ONCE(dev->isr_state, isr_state - 1);
+	}
+	else if (isr_state == 1) // here we need to release the lock
+	{
+		mutex_unlock(&(dev->isr_lock));
+		WRITE_ONCE(dev->isr_state, 0);
 	}
 	return 0;
 }
@@ -253,6 +253,7 @@ static unsigned char si446x_get_response(struct si446x *dev, void *buff, unsigne
 	spi = dev->spibus;
 
 	// set command
+	memset(din, 0x0, len + 2);
 	memset(dout, 0xff, len + 2);
 	dout[0] = SI446X_CMD_READ_CMD_BUFF;
 
@@ -267,7 +268,7 @@ static unsigned char si446x_get_response(struct si446x *dev, void *buff, unsigne
 		goto cleanup;
 	}
 	cts = din[1];
-	if (cts)
+	if (cts && (buff != NULL))
 	{
 		// memcpy
 		memcpy(buff, din + 2, len);
@@ -319,22 +320,17 @@ static void spi_write_buf(struct si446x *dev, void *out, u8 len)
 static void si446x_do_api(struct si446x *dev, void *data, u8 len, void *out,
 						  u8 outLen)
 {
-	int ret;
-	ret = interrupt_off(dev);
+	if (si446x_wait_response(dev, NULL, 0,
+							 1)) // Make sure it's ok to send a command
 	{
-		if (si446x_wait_response(dev, NULL, 0,
-								 1)) // Make sure it's ok to send a command
-		{
-			spi_write_buf(dev, data, len);
-			if (((u8 *)data)[0] ==
-				SI446X_CMD_IRCAL) // If we're doing an IRCAL then wait for its completion without a timeout since it can sometimes take a few seconds
-				si446x_wait_response(dev, NULL, 0, 0);
-			else if (out !=
-					 NULL) // If we have an output buffer then read command response into it
-				si446x_wait_response(dev, out, outLen, 1);
-		}
+		spi_write_buf(dev, data, len);
+		if (((u8 *)data)[0] ==
+			SI446X_CMD_IRCAL) // If we're doing an IRCAL then wait for its completion without a timeout since it can sometimes take a few seconds
+			si446x_wait_response(dev, NULL, 0, 0);
+		else if (out !=
+				 NULL) // If we have an output buffer then read command response into it
+			si446x_wait_response(dev, out, outLen, 1);
 	}
-	ret = interrupt_on(dev);
 }
 
 // Configure a bunch of properties (up to 12 properties in one go)
@@ -405,8 +401,8 @@ void si446x_setup_callback(struct si446x *dev, u16 callbacks, u8 state)
 		}
 
 		// always keep RXBEGIN enabled, what about RXCOMPLETE and RXINVALID?
-		data[0] |= SI446X_RXBEGIN_CB >> 8;
-		data[1] |= SI446X_RXBEGIN_CB;
+		// data[0] |= SI446X_RXBEGIN_CB >> 8;
+		// data[1] |= SI446X_RXBEGIN_CB;
 
 		dev->enabledInterrupts[IRQ_PACKET] = data[0];
 		dev->enabledInterrupts[IRQ_MODEM] = data[1];
@@ -532,12 +528,11 @@ static void si446x_set_state(struct si446x *dev, si446x_state_t newState)
 }
 
 // Clear RX and TX FIFOs
-static void si446x_clear_fifo(struct si446x *dev)
+static void si446x_clear_fifo(struct si446x *dev, bool all)
 {
-	static const u8 clearFifo[] = {
-		SI446X_CMD_FIFO_INFO,
-		SI446X_FIFO_CLEAR_RX | SI446X_FIFO_CLEAR_TX};
-	si446x_do_api(dev, (u8 *)clearFifo, sizeof(clearFifo), NULL, 0);
+	static u8 clearFifo[2] = {SI446X_CMD_FIFO_INFO, 0x0};
+	clearFifo[1] = SI446X_FIFO_CLEAR_TX | (all ? SI446X_FIFO_CLEAR_RX : 0x0);
+	si446x_do_api(dev, (void *)clearFifo, sizeof(clearFifo), NULL, 0);
 }
 
 static void si446x_read_irq_regs(struct si446x *dev, void *buff)
@@ -562,9 +557,9 @@ static void si446x_reset_device(struct si446x *dev)
 {
 	if (gpio_is_valid(dev->sdn_pin))
 	{
-		gpio_set_value_cansleep(dev->sdn_pin, 1);
+		gpio_set_value(dev->sdn_pin, 1);
 		msleep(50);
-		gpio_set_value_cansleep(dev->sdn_pin, 0);
+		gpio_set_value(dev->sdn_pin, 0);
 		msleep(50);
 	}
 	else
@@ -730,6 +725,7 @@ static void si446x_internal_read(struct si446x *dev, u8 *buf, ssize_t len)
 			.bits_per_word = 8};
 
 	memset(dout, 0xff, len + 1);
+	memset(din, 0x0, len + 1);
 	dout[0] = SI446X_CMD_READ_RX_FIFO;
 	spi = dev->spibus;
 
@@ -756,10 +752,11 @@ static void si446x_internal_write(struct si446x *dev, u8 *buf, int len)
 	struct spi_transfer xfer =
 		{
 			.tx_buf = dout,
+			.rx_buf = NULL,
 			.len = len + 2,
 			.bits_per_word = 8};
 
-	memset(dout, 0xff, len + 1);
+	memset(dout, 0xff, len + 2);
 	dout[0] = SI446X_CMD_WRITE_TX_FIFO;
 	dout[1] = len;
 
@@ -797,7 +794,7 @@ static int si446x_tx(struct si446x *dev, void *packet, u8 len, u8 channel, si446
 	}
 
 	si446x_set_state(dev, dev->SI446X_IDLE_MODE);
-	si446x_clear_fifo(dev);
+	si446x_clear_fifo(dev, len > 0x40);
 	si446x_read_irq_noclr(dev, NULL, 0, 0, 0xFF);
 
 	// Load data to FIFO
@@ -909,13 +906,44 @@ static void si446x_irq_work_handler(struct work_struct *work)
 		{
 			len = 0;
 			si446x_internal_read(dev, &len, 1);
-			printk(KERN_INFO DRV_NAME ": Valid packet len %d\n", (int) len);
+			printk(KERN_INFO DRV_NAME ": Valid packet len %u\n", len);
 			dev->rssi = si446x_get_latched_rssi(dev);
 			if ((len != 0xff) && (len != 0))
 			{
 				read_rx_fifo = true;
 				dev->rx_pk_ctr++;
 			}
+		}
+		// Read data in
+		if (read_rx_fifo)
+		{
+			int head, tail, new_head, remainder, seq_len, space;
+			u8 buff[SI446X_MAX_PACKET_LEN];
+			memset(buff, 0x0, SI446X_MAX_PACKET_LEN);
+			si446x_internal_read(dev, buff, len);
+			head = READ_ONCE(dev->rxbuf->head);
+			tail = READ_ONCE(dev->rxbuf->tail);
+			space = CIRC_SPACE(head, READ_ONCE(dev->rxbuf->tail), dev->rxbuf_len);
+			// printk(KERN_INFO DRV_NAME ": RX handler: %d bytes received\n", (int) len);
+			printk(KERN_INFO DRV_NAME ": Received: %s\n", buff);
+			if (space < len)
+			{
+				head = 0;
+				tail = 0;
+				WRITE_ONCE(dev->rxbuf->tail, tail);
+				WRITE_ONCE(dev->rxbuf->head, head);
+			}
+			remainder = len % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1);
+			seq_len = len - remainder;
+			new_head = (head + len) & (dev->rxbuf_len - 1);
+			/* Write the block making sure to wrap around the end of the buffer */
+			memcpy(dev->rxbuf->buf + head, buff, remainder);
+			memcpy(dev->rxbuf->buf, buff + remainder, seq_len);
+			WRITE_ONCE(dev->rxbuf->head, new_head);
+			WRITE_ONCE(dev->data_available, true);
+			wake_up_interruptible(&(dev->rxq));
+			read_rx_fifo = false;
+			len = 0;
 		}
 		// corrupted packet
 		if (interrupts[2] & (1 << SI446X_CRC_ERROR_PEND))
@@ -942,36 +970,6 @@ static void si446x_irq_work_handler(struct work_struct *work)
 		if (interrupts[6] & (1 << SI446X_WUT_PEND))
 		{
 			si446x_wut_cb(dev);
-		}
-		// Read data in
-		if (read_rx_fifo)
-		{
-			int head, tail, new_head, remainder, seq_len, space;
-			u8 buff[SI446X_MAX_PACKET_LEN];
-			memset(buff, 0x0, SI446X_MAX_PACKET_LEN);
-			si446x_internal_read(dev, buff, len);
-			head = READ_ONCE(dev->rxbuf->head);
-			tail = READ_ONCE(dev->rxbuf->tail);
-			space = CIRC_SPACE(head, READ_ONCE(dev->rxbuf->tail), dev->rxbuf_len);
-			printk(KERN_INFO DRV_NAME ": RX handler: %d bytes received\n", (int) len);
-			if (space < len)
-			{
-				head = 0;
-				tail = 0;
-				WRITE_ONCE(dev->rxbuf->tail, tail);
-				WRITE_ONCE(dev->rxbuf->head, head);
-			}
-			remainder = len % (CIRC_SPACE_TO_END(head, tail, dev->rxbuf_len) + 1);
-			seq_len = len - remainder;
-			new_head = (head + len) & (dev->rxbuf_len - 1);
-			/* Write the block making sure to wrap around the end of the buffer */
-			memcpy(dev->rxbuf->buf + head, buff, remainder);
-			memcpy(dev->rxbuf->buf, buff + remainder, seq_len);
-			WRITE_ONCE(dev->rxbuf->head, new_head);
-			WRITE_ONCE(dev->data_available, true);
-			wake_up_interruptible(&(dev->rxq));
-			read_rx_fifo = false;
-			len = 0;
 		}
 	}
 	WRITE_ONCE(dev->isr_busy, false); // indicate ISR not busy
@@ -1049,6 +1047,7 @@ nonblock:
 	out_count -= copy_to_user(buf + remainder, dev->rxbuf->buf, seq_len);	 // wrap around
 	WRITE_ONCE(dev->rxbuf->tail, (tail + out_count) & (dev->rxbuf_len - 1)); // update position of tail
 	return out_count;
+	printk(KERN_INFO DRV_NAME ": Wrote %d bytes\n", out_count);
 ret:
 	return 0;
 }
@@ -1175,6 +1174,7 @@ static int si446x_release(struct inode *inod, struct file *filp)
 	struct si446x *dev;
 	struct cdev *tcdev;
 	int open_ctr;
+	printk(KERN_INFO DRV_NAME ": %s invoked\n", __func__);
 	tcdev = inod->i_cdev;
 	dev = container_of(tcdev, struct si446x, serdev);
 	if (dev != filp->private_data)
@@ -1184,6 +1184,7 @@ static int si446x_release(struct inode *inod, struct file *filp)
 	WRITE_ONCE(dev->open_ctr, open_ctr);
 	if (!(open_ctr)) // reset device on very last close
 	{
+		printk(KERN_INFO DRV_NAME ": Last close, resetting device\n");
 		dev->data_available = false;
 		dev->rxbuf->head = 0;
 		dev->rxbuf->tail = 0;
@@ -1497,7 +1498,7 @@ static long si446x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		}
 		if (len > 0x80)
 			len = 0x80;
-		dev->fifo_len = 0x80;
+		dev->fifo_len = len;
 		break;
 	}
 	case SI446X_DEBUG_TX_PACKETS:
@@ -1641,7 +1642,7 @@ static int si446x_probe(struct spi_device *spi)
 		printk(KERN_ERR DRV_NAME ": Error allocating memory for receiver buffer\n");
 		goto err_main;
 	}
-	dev->fifo_len = 0x80;								// default 128 byte
+	dev->fifo_len = 0x40; // default 64 byte
 	dev->sleep_on_invalid = false;
 	if (!(si446x_buffer_len & (si446x_buffer_len - 1))) // length is not power of 2
 	{
