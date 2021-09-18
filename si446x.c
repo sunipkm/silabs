@@ -925,7 +925,7 @@ static void si446x_irq_work_handler(struct work_struct *work)
 			tail = READ_ONCE(dev->rxbuf->tail);
 			space = CIRC_SPACE(head, READ_ONCE(dev->rxbuf->tail), dev->rxbuf_len);
 			// printk(KERN_INFO DRV_NAME ": RX handler: %d bytes received\n", (int) len);
-			printk(KERN_INFO DRV_NAME ": Received: %s\n", buff);
+			printk(KERN_INFO DRV_NAME ": RX Handler: %s\n", buff);
 			if (space < len)
 			{
 				head = 0;
